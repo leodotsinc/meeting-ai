@@ -10,5 +10,7 @@ jobs:
     with:
       node_version: "20"
       package_manager: npm
+      install_command: npm ci
       pre_build_command: npx prisma generate
+      build_command: npm run build
       dockerfile: docker/Dockerfile
