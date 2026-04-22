@@ -1,110 +1,19 @@
-name: Build, Push and Deploy
+name: Deploy
 
 on:
   push:
-    branches:
-      - main
-  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
-  build-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-
-      - run: npm ci
-      - run: npx prisma generate
-      - run: npm run build
-
-  build-and-push:
-    needs: build-check
-    runs-on: ubuntu-latest
-    # Only run on push OR on PRs from the same repo (not forks)
-    if: |
-      github.event_name == 'push' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
-
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: leodots
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build Docker image
-        run: |
-          docker build -t ghcr.io/leodots/meeting-ai:latest -f docker/Dockerfile .
-
-      - name: Push Docker image
-        run: |
-          docker push ghcr.io/leodots/meeting-ai:latest
-
-  deploy:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    # Only run on push OR on PRs from the same repo (not forks)
-    if: |
-      github.event_name == 'push' ||
-      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
-
-    steps:
-      - name: Set up SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p ${{ secrets.SSH_PORT }} ${{ secrets.VPS_IP }} >> ~/.ssh/known_hosts
-
-      - name: Deploy via SSH using Docker Compose
-        run: |
-          ssh -i ~/.ssh/id_ed25519 -p ${{ secrets.SSH_PORT }} ${{ secrets.DEPLOY_USER }}@${{ secrets.VPS_IP }} << 'ENDSSH'
-            set -e
-
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u leodots --password-stdin
-
-            echo "📂 Navigating to meeting-ai directory..."
-            cd ~/apps/meeting-ai
-
-            echo "⬇️  Pulling new image..."
-            docker compose pull meeting-ai
-
-            echo "🛑 Stopping old container..."
-            docker stop meeting-ai 2>/dev/null || true
-            docker rm -f meeting-ai 2>/dev/null || true
-
-            echo "🚀 Starting new container..."
-            docker compose up -d meeting-ai
-
-            echo "✅ Deployment completed!"
-
-            echo "🧹 Cleaning up old images..."
-            docker image prune -af --filter "until=24h"
-          ENDSSH
-
-      - name: Health check
-        run: |
-          ssh -i ~/.ssh/id_ed25519 -p ${{ secrets.SSH_PORT }} ${{ secrets.DEPLOY_USER }}@${{ secrets.VPS_IP }} '
-            sleep 10
-            if docker ps | grep -q meeting-ai; then
-              echo "✅ Container meeting-ai is running"
-              docker ps | grep meeting-ai
-              exit 0
-            else
-              echo "❌ Container failed to start"
-              docker logs meeting-ai --tail 50
-              exit 1
-            fi
-          '
+  ci:
+    uses: leodotsinc/.github/.github/workflows/deploy.yml@main
+    secrets: inherit
+    with:
+      app_dir: meeting-ai
+      service_name: meeting-ai
+      container_name: meeting-ai
+      dockerfile: docker/Dockerfile

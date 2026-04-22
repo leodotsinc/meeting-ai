@@ -1,0 +1,14 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: leodotsinc/.github/.github/workflows/ci.yml@main
+    with:
+      node_version: "20"
+      package_manager: npm
+      pre_build_command: npx prisma generate
+      dockerfile: docker/Dockerfile
