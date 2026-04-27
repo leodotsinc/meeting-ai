@@ -31,7 +31,7 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "dotenv": "^17.4.2",
-    "lucide-react": "^0.562.0",
+    "lucide-react": "^1.11.0",
     "motion": "^12.23.26",
     "nanoid": "^5.1.9",
     "next": "16.2.4",
