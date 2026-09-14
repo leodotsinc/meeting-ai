@@ -1,3 +1,4 @@
+import { withDeploymentLeaseRoute } from "@/lib/server/deployment-lease";
 import { NextRequest, NextResponse } from "next/server";
 import { unlink } from "fs/promises";
 import { auth } from "../../../../../auth";
@@ -74,7 +75,7 @@ export async function GET(
 }
 
 // PATCH /api/meetings/[id] - Update meeting
-export async function PATCH(
+async function handlePATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -225,7 +226,7 @@ export async function PATCH(
 }
 
 // DELETE /api/meetings/[id] - Delete meeting
-export async function DELETE(
+async function handleDELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -272,3 +273,6 @@ export async function DELETE(
     );
   }
 }
+
+export const PATCH = withDeploymentLeaseRoute(handlePATCH);
+export const DELETE = withDeploymentLeaseRoute(handleDELETE);

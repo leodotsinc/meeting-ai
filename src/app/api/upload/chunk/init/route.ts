@@ -1,3 +1,4 @@
+import { withDeploymentLeaseRoute } from "@/lib/server/deployment-lease";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "../../../../../../auth";
 import { apiRateLimiter, RATE_LIMITS } from "@/lib/rate-limit";
@@ -8,7 +9,7 @@ import {
   saveChunkedUploadMetadata,
 } from "@/lib/server/chunked-upload";
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
@@ -84,3 +85,5 @@ export async function POST(request: NextRequest) {
   }
 }
 
+
+export const POST = withDeploymentLeaseRoute(handlePOST);

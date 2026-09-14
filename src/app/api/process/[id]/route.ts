@@ -1,3 +1,4 @@
+import { withDeploymentLeaseRoute } from "@/lib/server/deployment-lease";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "../../../../../auth";
 import { prisma } from "@/lib/db/prisma";
@@ -6,7 +7,7 @@ import { ProcessingStatus } from "@prisma/client";
 import { apiRateLimiter, RATE_LIMITS } from "@/lib/rate-limit";
 
 // POST /api/process/[id] - Start processing a meeting
-export async function POST(
+async function handlePOST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -126,3 +127,5 @@ export async function GET(
     );
   }
 }
+
+export const POST = withDeploymentLeaseRoute(handlePOST);

@@ -3,8 +3,13 @@ import { ProcessingStatus } from "@prisma/client";
 import { transcribeAudio, getSpeakerColor } from "./transcription";
 import { analyzeMeeting } from "./gemini";
 import { log } from "@/lib/logger";
+import { withDeploymentLease } from "@/lib/server/deployment-lease";
 
 export async function processMeeting(meetingId: string): Promise<void> {
+  return withDeploymentLease(() => runMeetingProcessing(meetingId));
+}
+
+async function runMeetingProcessing(meetingId: string): Promise<void> {
   const startTime = Date.now();
   const meeting = await prisma.meeting.findUnique({
     where: { id: meetingId },

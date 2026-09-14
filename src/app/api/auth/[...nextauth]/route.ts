@@ -1,3 +1,4 @@
+import { withDeploymentLeaseRoute } from "@/lib/server/deployment-lease";
 import { NextRequest } from "next/server";
 import { handlers } from "../../../../../auth";
 import {
@@ -10,7 +11,7 @@ import {
 export const { GET } = handlers;
 
 // Wrap POST to add rate limiting for login attempts
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const url = new URL(request.url);
   const isCredentialsCallback =
     url.pathname.includes("/callback/credentials");
@@ -33,3 +34,5 @@ export async function POST(request: NextRequest) {
   // Pass to NextAuth handler
   return handlers.POST(request);
 }
+
+export const POST = withDeploymentLeaseRoute(handlePOST);

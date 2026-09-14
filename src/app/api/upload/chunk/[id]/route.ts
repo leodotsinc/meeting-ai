@@ -1,3 +1,4 @@
+import { withDeploymentLeaseRoute } from "@/lib/server/deployment-lease";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "../../../../../../auth";
 import {
@@ -7,7 +8,7 @@ import {
   writeChunk,
 } from "@/lib/server/chunked-upload";
 
-export async function POST(
+async function handlePOST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -55,3 +56,5 @@ export async function POST(
   }
 }
 
+
+export const POST = withDeploymentLeaseRoute(handlePOST);

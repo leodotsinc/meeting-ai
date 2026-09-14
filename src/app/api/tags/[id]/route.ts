@@ -1,9 +1,10 @@
+import { withDeploymentLeaseRoute } from "@/lib/server/deployment-lease";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "../../../../../auth";
 import { prisma } from "@/lib/db/prisma";
 
 // PATCH /api/tags/[id] - Update a tag
-export async function PATCH(
+async function handlePATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -68,7 +69,7 @@ export async function PATCH(
 }
 
 // DELETE /api/tags/[id] - Delete a tag
-export async function DELETE(
+async function handleDELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -108,3 +109,6 @@ export async function DELETE(
     );
   }
 }
+
+export const PATCH = withDeploymentLeaseRoute(handlePATCH);
+export const DELETE = withDeploymentLeaseRoute(handleDELETE);

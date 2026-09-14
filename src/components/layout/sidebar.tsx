@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useProjects } from "@/lib/hooks/use-projects";
 import { DynamicIcon } from "@/components/ui/icon-picker";
+import { ReleaseVersion } from "./release-version";
 
 interface SidebarProps {
   isOpen?: boolean;
@@ -228,9 +229,7 @@ export function Sidebar({ isOpen = true, onClose }: SidebarProps) {
       </div>
 
       <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
-        <p className="text-xs text-zinc-400 dark:text-zinc-500">
-          Meeting AI v0.1.0
-        </p>
+        <ReleaseVersion />
       </div>
     </div>
   );

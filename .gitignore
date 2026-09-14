@@ -49,3 +49,13 @@ next-env.d.ts
 .claude/
 CLAUDE_CONTEXT.md
 
+
+# Local/CI release evidence and Python caches
+__pycache__/
+*.pyc
+/artifacts/
+/release.json
+/deployed-release.json
+/release-notes.md
+/image-tag.txt
+/ci-count.txt

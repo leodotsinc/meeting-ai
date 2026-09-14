@@ -1,8 +1,3 @@
 #!/bin/sh
-set -e
-
-echo "Syncing database schema..."
-npx prisma db push
-
-echo "Starting application..."
+set -eu
 exec node server.js
