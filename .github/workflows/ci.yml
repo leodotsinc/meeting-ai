@@ -48,3 +48,22 @@ jobs:
       - run: node scripts/qualify-migrations.mjs
       - run: npm run build
       - run: npx tsc --noEmit
+
+  image-qualify:
+    name: Exact image, authentication and safe migration bootstrap
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Build isolated qualification image
+        env:
+          REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 --build-arg APP_VERSION=0.1.0 \
+            --build-arg APP_REVISION="$REVISION" --build-arg APP_BUILD_ID="$GITHUB_RUN_ID" \
+            -t meeting-ai:ci-qualification -f docker/Dockerfile .
+      - name: Qualify runtime and read-only migration commands
+        run: python3 scripts/qualify-image.py meeting-ai:ci-qualification

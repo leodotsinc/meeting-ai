@@ -70,17 +70,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    services:
-      postgres:
-        image: postgres@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
-        env:
-          POSTGRES_USER: ci_admin
-          POSTGRES_PASSWORD: ci_fixture_only
-          POSTGRES_DB: meeting_migrations_ci_image
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U ci_admin -d meeting_migrations_ci_image"
-          --health-interval 5s --health-timeout 5s --health-retries 12
     env:
       RELEASE_SHA: ${{ needs.gate.outputs.sha }}
       APP_VERSION: ${{ needs.gate.outputs.version }}
@@ -102,12 +91,6 @@ jobs:
             --build-arg APP_REVISION="$RELEASE_SHA" --build-arg APP_BUILD_ID="$GITHUB_RUN_ID" \
             -t "$image" -f docker/Dockerfile .
           echo "$image" > image-tag.txt
-      - name: Qualify migrations inside the image
-        run: |
-          set -euo pipefail
-          docker run --rm --network host --read-only --tmpfs /tmp:rw,nosuid,size=64m \
-            -e DATABASE_URL=postgresql://ci_admin:ci_fixture_only@127.0.0.1:5432/meeting_migrations_ci_image \
-            --entrypoint node "$(cat image-tag.txt)" scripts/qualify-migrations.mjs
       - name: Verify runtime, authentication boundary and drain
         run: python3 scripts/qualify-image.py "$(cat image-tag.txt)"
       - name: Publish qualified image and build manifest

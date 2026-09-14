@@ -30,6 +30,8 @@ def qualify(image):
     db=network+'-db'
     app=network+'-app'
     migrator=network+'-migrator'
+    migration_check=network+'-migration-check'
+    migration_database='meeting_migrations_ci_'+token
     made=[]
     password=secrets.token_hex(24)
     runtime_password=secrets.token_hex(24)
@@ -60,6 +62,18 @@ def qualify(image):
                 sql('SELECT 1;');break
             except RuntimeError:time.sleep(1)
         else:raise RuntimeError('isolated database not ready')
+        # Exercise resolve/diff/deploy using the same read-only filesystem and
+        # temporary writable area required by the protected host helper. The
+        # loopback is this disposable database container's namespace, never VPS.
+        sql('CREATE DATABASE '+migration_database+';')
+        made.append(('container',migration_check))
+        migration_proof=json.loads(run('docker','run','--rm','--name',migration_check,
+            '--network','container:'+db,'--read-only','--tmpfs','/tmp:rw,nosuid,size=64m',
+            '--cap-drop','ALL','--security-opt','no-new-privileges','--pids-limit','128',
+            '--memory','512m','--cpus','1','-e','HOME=/tmp','-e','CHECKPOINT_DISABLE=1',
+            '-e','DATABASE_URL=postgresql://ci_admin:'+password+'@127.0.0.1:5432/'+migration_database,
+            '--entrypoint','node',image,'scripts/qualify-migrations.mjs',timeout=480))
+        assert migration_proof['ok'] is True and len(migration_proof['checks'])==15
         made.append(('container',migrator))
         run('docker','run','--rm','--name',migrator,'--network',network,'-e',
             'DATABASE_URL=postgresql://ci_admin:'+password+'@database:5432/meeting_image_ci',
@@ -110,7 +124,8 @@ def qualify(image):
         run('docker','exec','-u','0',app,'rm','/run/cloudbox/deploy/draining')
         assert run('docker','exec',app,'sh','-c','ls -A /run/cloudbox/deploy/leases')==''
         print(json.dumps({'ok':True,'image_id':info['Id'],'version':metadata['version'],
-            'checks':['readiness_database','anonymous_auth_boundary','fixture_login',
+            'migration_checks':migration_proof['checks'],
+            'migration_readonly_image':True,'checks':['readiness_database','anonymous_auth_boundary','fixture_login',
                       'authenticated_version','runtime_database_stats','drain_blocks_mutations','leases_released'],
             'external_processing':False,'production_restore':False}))
     finally:
