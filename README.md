@@ -127,7 +127,7 @@ The image requires `APP_VERSION`, `APP_REVISION`, `APP_BUILD_ID` at build time a
 
 Deployment configuration uses repository secrets `MEETING_DEPLOY_KEY` and `MEETING_SSH_KNOWN_HOSTS`, plus non-secret target variables `VPS_IP`, `SSH_PORT`, `DEPLOY_USER`. The key must be restricted to the root-owned Meeting helper; host identity is pinned, never discovered blindly during a deploy. The generic metadata helper in `scripts/release_manifest.py` is vendored from the infrastructure repository and must be kept consistent with its contract.
 
-**D1 status:** implementation is prepared; production baseline/bootstrap and automatic Deploy activation remain pending. VPS-specific installation, rollback and backup procedures belong in the private infrastructure repository. Docker image qualification uses only disposable local containers and fixtures; it does not prove recovery of production data.
+**D1 status:** the production bootstrap was verified with v0.1.0 on 2026-09-14, preserving data, uploads and the existing authenticated session. Subsequent successful main CI uses the guarded release flow above; consult GitHub Releases and the protected host manifest for the verified version. VPS-specific installation, rollback and backup procedures belong in the private infrastructure repository. Isolated image qualification does not prove recovery of production data.
 
 ## Environment Variables
 
