@@ -34,6 +34,17 @@ RUN npm run build
 FROM base AS runner
 WORKDIR /app
 
+ARG APP_VERSION
+ARG APP_REVISION
+ARG APP_BUILD_ID
+ENV APP_VERSION=$APP_VERSION
+ENV APP_REVISION=$APP_REVISION
+ENV APP_BUILD_ID=$APP_BUILD_ID
+ENV DEPLOY_CONTROL_DIR=/run/cloudbox/deploy
+LABEL io.cloudbox.deployment.drain="file-v1"
+LABEL org.opencontainers.image.version=$APP_VERSION
+LABEL org.opencontainers.image.revision=$APP_REVISION
+LABEL org.opencontainers.image.source="https://github.com/leodotsinc/meeting-ai"
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
@@ -57,6 +68,9 @@ COPY --from=builder --chown=nextjs:nodejs /app/prisma.config.ts ./prisma.config.
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
 
+# Migration checks run in a separate one-shot container with the migrator credential.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
+
 # Copy entrypoint script
 COPY --chown=nextjs:nodejs docker/entrypoint.sh ./entrypoint.sh
 RUN chmod +x entrypoint.sh
@@ -71,5 +85,5 @@ EXPOSE 3003
 ENV PORT=3003
 ENV HOSTNAME="0.0.0.0"
 
-# Start with entrypoint (runs migrations then starts server)
+# Start the web app with its limited runtime credential; never mutate schema here.
 CMD ["./entrypoint.sh"]

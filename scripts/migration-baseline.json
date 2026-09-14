@@ -1,0 +1,25 @@
+{
+  "baseline": "0_init",
+  "generated_with": "prisma 7.9.1",
+  "baseline_sql_sha256": "fd9ef11a06714d45382df0af8612ca6dd9603fbadb4ae869acc05cf5d0c98010",
+  "baseline_schema_sha256": "3e08ee2ca972dcb9881c8c0b74a081999921bdb72ccc492a090f38b9eea365b6",
+  "baseline_tables": [
+    "Analysis",
+    "Meeting",
+    "MeetingTag",
+    "Project",
+    "Setting",
+    "Speaker",
+    "Tag",
+    "Transcript",
+    "User",
+    "Utterance"
+  ],
+  "baseline_enums": [
+    "Language",
+    "ProcessingStatus"
+  ],
+  "allowed_extensions": [
+    "plpgsql"
+  ]
+}

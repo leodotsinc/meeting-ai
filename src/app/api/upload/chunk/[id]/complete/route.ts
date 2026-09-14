@@ -1,3 +1,4 @@
+import { withDeploymentLeaseRoute } from "@/lib/server/deployment-lease";
 import { stat } from "fs/promises";
 import { join } from "path";
 import { nanoid } from "nanoid";
@@ -17,7 +18,7 @@ import {
   UploadValidationError,
 } from "@/lib/server/meetings";
 
-export async function POST(
+async function handlePOST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -92,3 +93,5 @@ export async function POST(
     );
   }
 }
+
+export const POST = withDeploymentLeaseRoute(handlePOST);

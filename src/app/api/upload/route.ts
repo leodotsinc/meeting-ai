@@ -1,3 +1,4 @@
+import { withDeploymentLeaseRoute } from "@/lib/server/deployment-lease";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "../../../../auth";
 import { apiRateLimiter, RATE_LIMITS } from "@/lib/rate-limit";
@@ -8,7 +9,7 @@ import {
   validateAudioUpload,
 } from "@/lib/server/meetings";
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   try {
     // Check authentication
     const session = await auth();
@@ -91,3 +92,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withDeploymentLeaseRoute(handlePOST);

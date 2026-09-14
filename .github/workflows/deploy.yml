@@ -1,19 +1,186 @@
 name: Deploy
 
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
     branches: [main]
+    types: [completed]
+  workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: meeting-production-release
+  cancel-in-progress: false
 
 jobs:
-  ci:
-    uses: leodotsinc/.github/.github/workflows/deploy.yml@main
-    secrets: inherit
-    with:
-      app_dir: meeting-ai
-      service_name: meeting-ai
-      container_name: meeting-ai
-      dockerfile: docker/Dockerfile
+  gate:
+    permissions:
+      contents: read
+      actions: read
+    name: Select verified source and version
+    if: >-
+      github.repository == 'leodotsinc/meeting-ai' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
+      released: ${{ steps.version.outputs.already_released }}
+    steps:
+      - name: Require current main and exact successful CI
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUEST_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "$REQUEST_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$REF" == refs/heads/main ]]
+          main_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          [[ "$REQUEST_SHA" == "$main_sha" ]]
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$REQUEST_SHA&status=success" \
+            --jq '[.workflow_runs[] | select(.head_branch == "main" and .event == "push")] | length' > ci-count.txt
+          [[ $(cat ci-count.txt) -gt 0 ]]
+          echo "sha=$REQUEST_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select SemVer from successful release tags
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/select-release.py
+
+  build:
+    name: Build and qualify exact image
+    needs: gate
+    if: needs.gate.outputs.released != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      artifact_name: ${{ steps.artifact.outputs.name }}
+    permissions:
+      contents: read
+      packages: write
+    services:
+      postgres:
+        image: postgres@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
+        env:
+          POSTGRES_USER: ci_admin
+          POSTGRES_PASSWORD: ci_fixture_only
+          POSTGRES_DB: meeting_migrations_ci_image
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci_admin -d meeting_migrations_ci_image"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      RELEASE_SHA: ${{ needs.gate.outputs.sha }}
+      APP_VERSION: ${{ needs.gate.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build once
+        run: |
+          set -euo pipefail
+          image="ghcr.io/$GITHUB_REPOSITORY:build-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          docker build --platform linux/amd64 --build-arg APP_VERSION="$APP_VERSION" \
+            --build-arg APP_REVISION="$RELEASE_SHA" --build-arg APP_BUILD_ID="$GITHUB_RUN_ID" \
+            -t "$image" -f docker/Dockerfile .
+          echo "$image" > image-tag.txt
+      - name: Qualify migrations inside the image
+        run: |
+          set -euo pipefail
+          docker run --rm --network host --read-only --tmpfs /tmp:rw,nosuid,size=64m \
+            -e DATABASE_URL=postgresql://ci_admin:ci_fixture_only@127.0.0.1:5432/meeting_migrations_ci_image \
+            --entrypoint node "$(cat image-tag.txt)" scripts/qualify-migrations.mjs
+      - name: Verify runtime, authentication boundary and drain
+        run: python3 scripts/qualify-image.py "$(cat image-tag.txt)"
+      - name: Publish qualified image and build manifest
+        run: |
+          set -euo pipefail
+          image=$(cat image-tag.txt)
+          docker push "$image"
+          digest=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
+          python3 scripts/release_manifest.py create \
+            --service meeting-ai --compose-project meeting-ai --application-kind first_party \
+            --app-version "$APP_VERSION" --release-version "$APP_VERSION" \
+            --git-sha "$RELEASE_SHA" --image "$digest" --source-repository "https://github.com/$GITHUB_REPOSITORY" \
+            --build-id "$GITHUB_RUN_ID" --build-attempt "$GITHUB_RUN_ATTEMPT" \
+            --built-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > release.json
+      - name: Identify this build attempt
+        id: artifact
+        run: echo "name=meeting-release-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: release.json
+          if-no-files-found: error
+          retention-days: 30
+
+  rollout:
+    name: Backup, preflight and controlled rollout
+    needs: [gate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: write
+      actions: read
+    env:
+      RELEASE_SHA: ${{ needs.gate.outputs.sha }}
+      APP_VERSION: ${{ needs.gate.outputs.version }}
+      VPS_IP: ${{ vars.VPS_IP }}
+      SSH_PORT: ${{ vars.SSH_PORT }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+      - name: Configure restricted key and pinned host identity
+        env:
+          DEPLOY_KEY: ${{ secrets.MEETING_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.MEETING_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ -n "$DEPLOY_KEY" && -n "$KNOWN_HOSTS" ]]
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/meeting_deploy"
+          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/meeting_deploy" "$HOME/.ssh/known_hosts"
+      - name: Confirm source is still current before production
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ $(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha) == "$RELEASE_SHA" ]]
+      - run: python3 scripts/deploy/send-release.py preflight release.json
+      - run: python3 scripts/deploy/send-release.py deploy release.json
+      - name: Publish version only after verified deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/publish-release.py deployed-release.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: meeting-deployed-${{ github.run_id }}-${{ github.run_attempt }}
+          path: deployed-release.json
+          if-no-files-found: ignore
+          retention-days: 90

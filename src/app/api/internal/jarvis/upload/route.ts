@@ -1,3 +1,4 @@
+import { withDeploymentLeaseRoute } from "@/lib/server/deployment-lease";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { log } from "@/lib/logger";
@@ -9,7 +10,7 @@ import {
   validateAudioUpload,
 } from "@/lib/server/meetings";
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   try {
     const token = getBearerToken(request.headers.get("authorization"));
     if (!isValidInternalToken(token)) {
@@ -94,3 +95,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withDeploymentLeaseRoute(handlePOST);

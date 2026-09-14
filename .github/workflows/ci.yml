@@ -3,14 +3,48 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: meeting-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  ci:
-    uses: leodotsinc/.github/.github/workflows/ci.yml@main
-    with:
-      node_version: "22"
-      package_manager: npm
-      install_command: npm ci
-      pre_build_command: npx prisma generate
-      build_command: npm run build
-      dockerfile: docker/Dockerfile
+  qualify:
+    name: Tests, migrations and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
+        env:
+          POSTGRES_USER: ci_admin
+          POSTGRES_PASSWORD: ci_fixture_only
+          POSTGRES_DB: meeting_migrations_ci_actions
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci_admin -d meeting_migrations_ci_actions"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DATABASE_URL: postgresql://ci_admin:ci_fixture_only@127.0.0.1:5432/meeting_migrations_ci_actions
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '26'
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: node --test tests/*.test.mjs scripts/migration-check.test.mjs
+      - run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - run: node scripts/qualify-migrations.mjs
+      - run: npm run build
+      - run: npx tsc --noEmit

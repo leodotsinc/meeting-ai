@@ -1,3 +1,4 @@
+import { withDeploymentLeaseRoute } from "@/lib/server/deployment-lease";
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "../../../../auth";
 import {
@@ -26,7 +27,7 @@ export async function GET() {
   }
 }
 
-export async function POST(request: NextRequest) {
+async function handlePOST(request: NextRequest) {
   const session = await auth();
 
   if (!session?.user) {
@@ -60,7 +61,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function DELETE(request: NextRequest) {
+async function handleDELETE(request: NextRequest) {
   const session = await auth();
 
   if (!session?.user) {
@@ -90,3 +91,6 @@ export async function DELETE(request: NextRequest) {
     );
   }
 }
+
+export const POST = withDeploymentLeaseRoute(handlePOST);
+export const DELETE = withDeploymentLeaseRoute(handleDELETE);
