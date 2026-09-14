@@ -6,6 +6,11 @@ on:
     branches: [main]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      prepare_only:
+        description: Build and qualify an image without accessing production
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -116,6 +121,7 @@ jobs:
           retention-days: 30
 
   rollout:
+    if: github.event_name != 'workflow_dispatch' || inputs.prepare_only == false
     name: Backup, preflight and controlled rollout
     needs: [gate, build]
     runs-on: ubuntu-latest
