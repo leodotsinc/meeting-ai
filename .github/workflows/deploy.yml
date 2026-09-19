@@ -124,17 +124,32 @@ jobs:
     if: github.event_name != 'workflow_dispatch' || inputs.prepare_only == false
     name: Backup, preflight and controlled rollout
     needs: [gate, build]
+    permissions:
+      contents: read
+      packages: read
+    uses: leodotsinc/.github/.github/workflows/deploy.yml@e637da9fabe254ef31d95677a9260c5eca380079
+    with:
+      app_id: meeting-ai
+      release_artifact: ${{ needs.build.outputs.artifact_name }}
+      release_file: release.json
+      release_sha: ${{ needs.gate.outputs.sha }}
+      vps_host: ${{ vars.VPS_IP }}
+      ssh_port: ${{ vars.SSH_PORT }}
+      deploy_user: ${{ vars.DEPLOY_USER }}
+    secrets:
+      deploy_key: ${{ secrets.MEETING_DEPLOY_KEY }}
+      known_hosts: ${{ secrets.MEETING_SSH_KNOWN_HOSTS }}
+
+  publish:
+    name: Publish verified Meeting release
+    needs: [gate, build, rollout]
     runs-on: ubuntu-latest
-    timeout-minutes: 35
     permissions:
       contents: write
       actions: read
     env:
       RELEASE_SHA: ${{ needs.gate.outputs.sha }}
       APP_VERSION: ${{ needs.gate.outputs.version }}
-      VPS_IP: ${{ vars.VPS_IP }}
-      SSH_PORT: ${{ vars.SSH_PORT }}
-      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -142,26 +157,17 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: ${{ needs.build.outputs.artifact_name }}
-      - name: Configure restricted key and pinned host identity
-        env:
-          DEPLOY_KEY: ${{ secrets.MEETING_DEPLOY_KEY }}
-          KNOWN_HOSTS: ${{ secrets.MEETING_SSH_KNOWN_HOSTS }}
+          name: meeting-ai-deployment-result
+      - name: Extract and validate verified release
         run: |
-          set -euo pipefail
-          [[ -n "$DEPLOY_KEY" && -n "$KNOWN_HOSTS" ]]
-          install -d -m 700 "$HOME/.ssh"
-          printf '%s\n' "$DEPLOY_KEY" > "$HOME/.ssh/meeting_deploy"
-          printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
-          chmod 600 "$HOME/.ssh/meeting_deploy" "$HOME/.ssh/known_hosts"
-      - name: Confirm source is still current before production
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          [[ $(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha) == "$RELEASE_SHA" ]]
-      - run: python3 scripts/deploy/send-release.py preflight release.json
-      - run: python3 scripts/deploy/send-release.py deploy release.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path("deployment-result.json").read_text())
+          if result.get("ok") is not True or result.get("release", {}).get("deployment", {}).get("status") != "verified":
+              raise SystemExit("deployment result is not verified")
+          Path("deployed-release.json").write_text(json.dumps(result["release"], indent=2) + "\n")
+          PY
       - name: Publish version only after verified deployment
         env:
           GH_TOKEN: ${{ github.token }}
