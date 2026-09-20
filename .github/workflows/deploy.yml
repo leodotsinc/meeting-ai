@@ -192,6 +192,6 @@ jobs:
       result_artifact: ${{ needs.rollout.outputs.result_artifact }}
       result_file: deployment-result.json
       source_sha: ${{ needs.gate.outputs.sha }}
-      app_client_id: ${{ vars.VPS_BOOTSTRAP_RECONCILE_CLIENT_ID }}
+      app_client_id: ${{ vars.CLOUDBOX_INFRA_RECONCILE_CLIENT_ID }}
     secrets:
-      app_private_key: ${{ secrets.VPS_BOOTSTRAP_RECONCILE_PRIVATE_KEY }}
+      app_private_key: ${{ secrets.CLOUDBOX_INFRA_RECONCILE_PRIVATE_KEY }}
