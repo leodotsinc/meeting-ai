@@ -186,7 +186,7 @@ jobs:
     permissions:
       actions: read
       contents: read
-    uses: leodotsinc/.github/.github/workflows/reconcile.yml@7d18d84b258a7f0e2061aad331e97de05d2299a6
+    uses: leodotsinc/.github/.github/workflows/reconcile.yml@5242d92c3bb190f207fd202d21b3df5338ad52e4
     with:
       app_id: meeting-ai
       result_artifact: ${{ needs.rollout.outputs.result_artifact }}

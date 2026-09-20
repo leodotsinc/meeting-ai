@@ -1,6 +1,6 @@
 # Meeting AI: agent guidance
 
-- App source and delivery live here. VPS-wide inventory, policies and recovery are maintained in the private `leodots/vps-bootstrap` repository; do not copy host secrets, production data or private evidence here.
+- App source and delivery live here. VPS-wide inventory, policies and recovery are maintained in the private `leodots/cloudbox-infra` repository; do not copy host secrets, production data or private evidence here.
 - Production uses Docker Compose, a limited PostgreSQL runtime role and a separate migrator. Never run `prisma db push`, reset/restore a live database, start schema changes with runtime credentials, or use generic `compose down`/global prune in deployment.
 - Preserve authentication/encryption keys and uploads. A new release must retain existing sessions/data; HTTP readiness is distinct from authenticated acceptance, audio-provider processing and disaster recovery.
 - Release versions use stable SemVer. After the initial package version, routine commits increment PATCH, `feat:` increments MINOR, and `!`/`BREAKING CHANGE:` increments MAJOR. Classify commits honestly. Create the immutable `vX.Y.Z` release only after the exact image has been verified on the server. A retry is not a new version.
@@ -16,7 +16,7 @@
   before retrying the original release manifest. Never rebuild a consumed version.
 - After publication, the pinned shared reconciliation workflow submits that
   verified receipt through the destination-only `cloudbox-release-reconciler`
-  GitHub App and waits for the canonical `vps-bootstrap` PR/check/merge workflow.
+  GitHub App and waits for the canonical `cloudbox-infra` PR/check/merge workflow.
   Repair reconciliation failures without changing the deployed release identity
   or bypassing the destination allowlist.
 - All mutating API handlers and detached processing must retain a deployment lease. Add coverage when adding new mutations; never bypass draining to make a rollout succeed. Production requires the protected control bind.
