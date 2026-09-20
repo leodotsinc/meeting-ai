@@ -14,6 +14,11 @@
   run/attempt-specific artifacts. Publication consumes `rollout.outputs.result_artifact`.
   A timeout/disconnection leaves runtime state unknown; inspect the host checkpoint
   before retrying the original release manifest. Never rebuild a consumed version.
+- After publication, the pinned shared reconciliation workflow submits that
+  verified receipt through the destination-only `cloudbox-release-reconciler`
+  GitHub App and waits for the canonical `vps-bootstrap` PR/check/merge workflow.
+  Repair reconciliation failures without changing the deployed release identity
+  or bypassing the destination allowlist.
 - All mutating API handlers and detached processing must retain a deployment lease. Add coverage when adding new mutations; never bypass draining to make a rollout succeed. Production requires the protected control bind.
 - Run `npm test`, Python tests, build/typecheck and appropriate isolated qualification after changes. ESLint10 compatibility is fixed; six pre-existing React Hooks errors remain. Do not report lint passed or expand delivery work into unrelated UI refactors.
 - D1 bootstrap was verified on 2026-09-14 with v0.1.0: baseline metadata, control bind and restricted deployment access are installed; existing data, uploads and authenticated session were preserved. Do not reapply the initial bootstrap. Follow the current verified release and workflow state for routine updates. Independent disaster recovery and new provider processing remain separate, unverified acceptance steps.

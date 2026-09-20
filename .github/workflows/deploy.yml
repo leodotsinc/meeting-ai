@@ -179,3 +179,19 @@ jobs:
           path: deployed-release.json
           if-no-files-found: ignore
           retention-days: 90
+
+  reconcile:
+    name: Reconcile verified deployment record
+    needs: [gate, rollout, publish]
+    permissions:
+      actions: read
+      contents: read
+    uses: leodotsinc/.github/.github/workflows/reconcile.yml@7d18d84b258a7f0e2061aad331e97de05d2299a6
+    with:
+      app_id: meeting-ai
+      result_artifact: ${{ needs.rollout.outputs.result_artifact }}
+      result_file: deployment-result.json
+      source_sha: ${{ needs.gate.outputs.sha }}
+      app_client_id: ${{ vars.VPS_BOOTSTRAP_RECONCILE_CLIENT_ID }}
+    secrets:
+      app_private_key: ${{ secrets.VPS_BOOTSTRAP_RECONCILE_PRIVATE_KEY }}
