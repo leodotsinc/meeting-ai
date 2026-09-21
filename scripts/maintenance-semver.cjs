@@ -1,11 +1,11 @@
 'use strict';
 // Same range semantics as npm/arborist dep-valid.js: satisfies(..., true).
 // The tool is installed from a separate reviewed lock, never candidate packages.
-const fs = require('node:fs');
-const path = require('node:path');
-const root = path.join(__dirname, 'maintenance-tools/node_modules/semver');
-const semver = require(root);
-if (require(path.join(root, 'package.json')).version !== '7.8.5') process.exit(2);
+async function main() {
+const { readFileSync } = await import('node:fs');
+const { default: semver } = await import('./maintenance-tools/node_modules/semver/index.js');
+const manifest = JSON.parse(readFileSync(`${__dirname}/maintenance-tools/node_modules/semver/package.json`, 'utf8'));
+if (manifest.version !== '7.8.5') process.exit(2);
 let size = 0; const chunks = [];
 process.stdin.on('data', chunk => {
   size += chunk.length;
@@ -23,3 +23,5 @@ process.stdin.on('end', () => {
     process.stdout.write(JSON.stringify(values));
   } catch { process.exit(2); }
 });
+}
+main().catch(() => process.exit(2));
