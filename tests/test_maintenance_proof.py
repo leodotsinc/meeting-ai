@@ -89,6 +89,25 @@ class ProofTests(unittest.TestCase):
             with self.subTest(fault=fault):
                 value=self.emit();self.assertEqual(value['status'],'refused');self.assertEqual(value['code'],code)
 
+    def test_upstream_development_tools_are_not_installed_edges(self):
+        original=self.api.package
+        def metadata(name):
+            value=original(name)
+            for row in value['versions'].values():
+                row['devDependencies']={'upstream-test-runner':'^9.0.0'}
+            return value
+        with patch.object(self.api,'package',side_effect=metadata):
+            value=self.emit()
+        self.assertEqual(value['status'],'passed')
+        self.assertNotIn('devDependencies',value['metadata_inputs']['node_modules/alpha']['after'])
+        for group in ('dependencies','optionalDependencies','peerDependencies'):
+            def drift(name,group=group):
+                value=metadata(name)
+                value['versions'][self.new_lock['packages']['node_modules/'+name]['version']][group]={'unexpected':'^1.0.0'}
+                return value
+            with self.subTest(group=group),patch.object(self.api,'package',side_effect=drift):
+                self.assertEqual(self.emit()['code'],'NPM_LOCK_EDGE_DRIFT')
+
     def test_untrusted_identity_code_drift_and_expired_observation_fail_closed(self):
         for fault in ('actor','head'):
             self.api.fault=fault

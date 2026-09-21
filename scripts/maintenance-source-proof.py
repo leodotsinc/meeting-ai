@@ -110,7 +110,9 @@ def metadata_review(delta,inputs,api,now,minimum_days):
             require(meta.get('name')==c['name'] and meta.get('version')==version and
                     lock['version']==version and meta['dist']['integrity']==lock['integrity'] and
                     meta['dist']['tarball']==lock['resolved'],'NPM_SRI_MISMATCH')
-            for group in gate.GROUPS:require(meta.get(group,{})==lock.get(group,{}),'NPM_LOCK_EDGE_DRIFT')
+            # A consumed package does not install its upstream development dependencies.
+            for group in ('dependencies','optionalDependencies','peerDependencies'):
+                require(meta.get(group,{})==lock.get(group,{}),'NPM_LOCK_EDGE_DRIFT')
         require(new['dist']['integrity']==c['integrity'] and new['dist']['tarball']==c['resolved'],'NPM_SRI_MISMATCH')
         require(not new.get('deprecated'),'DEPRECATED_CANDIDATE')
         require(not any(k in new.get('scripts',{}) for k in ('preinstall','install','postinstall','prepare')),'INSTALL_SCRIPT_REQUIRES_REVIEW')
