@@ -116,7 +116,7 @@ def qualify(image):
             try:
                 status,body,_=request('/api/health')
                 if status==200 and json.loads(body)=={'status':'ok'}:break
-            except (OSError,ValueError):pass
+            except (OSError,ValueError,RuntimeError):pass
             time.sleep(1)
         else:raise RuntimeError('isolated app readiness failed')
         assert request('/api/version')[0]==401
