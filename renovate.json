@@ -1,0 +1,13 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "github>leodotsinc/.github//renovate/maintenance"
+  ],
+  "enabled": true,
+  "description": "Mend Renovate installation verified on 2026-09-21. Shared discovery owns npm/lockfiles, all Dockerfiles and GitHub Actions. Autonomous production maintenance remains unqualified and blocked.",
+  "enabledManagers": [
+    "npm",
+    "dockerfile",
+    "github-actions"
+  ]
+}

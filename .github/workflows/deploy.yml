@@ -24,6 +24,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     name: Select verified source and version
     if: >-
       github.repository == 'leodotsinc/meeting-ai' &&
@@ -32,6 +33,7 @@ jobs:
         github.event.workflow_run.event == 'push' &&
         github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       sha: ${{ steps.source.outputs.sha }}
       version: ${{ steps.version.outputs.version }}
@@ -58,6 +60,11 @@ jobs:
           ref: ${{ steps.source.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Refuse unqualified maintenance before ordinary deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREPARE_ONLY: ${{ inputs.prepare_only }}
+        run: python3 scripts/maintenance-guard.py
       - name: Select SemVer from successful release tags
         id: version
         env:
@@ -98,6 +105,43 @@ jobs:
           echo "$image" > image-tag.txt
       - name: Verify runtime, authentication boundary and drain
         run: python3 scripts/qualify-image.py "$(cat image-tag.txt)"
+      - name: Materialize builder image for development and build package coverage
+        run: docker build --platform linux/amd64 --target builder -t meeting-ai-maintenance-builder:local -f docker/Dockerfile .
+      - name: Materialize dependency-stage packages
+        run: docker build --platform linux/amd64 --target deps -t meeting-ai-maintenance-deps:local -f docker/Dockerfile .
+      - name: Bind security evidence to exact image identities
+        id: maintenance_images
+        run: |
+          set -euo pipefail
+          echo "runtime=$(docker image inspect $(cat image-tag.txt) --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
+          echo "deps=$(docker image inspect meeting-ai-maintenance-deps:local --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
+          echo "builder=$(docker image inspect meeting-ai-maintenance-builder:local --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
+      - name: Scan runtime image with fresh vulnerability database
+        id: runtime_security
+        uses: leodotsinc/.github/actions/maintenance-scan@902ed57f0e5288e4a0107057cb2e2ca87750a45f
+        with:
+          image: ${{ steps.maintenance_images.outputs.runtime }}
+          output: maintenance-security/runtime
+      - name: Scan build image and development dependencies
+        if: ${{ !cancelled() && steps.maintenance_images.outcome == 'success' }}
+        uses: leodotsinc/.github/actions/maintenance-scan@902ed57f0e5288e4a0107057cb2e2ca87750a45f
+        with:
+          image: ${{ steps.maintenance_images.outputs.builder }}
+          output: maintenance-security/builder
+      - name: Scan dependency stage including build-only OS packages
+        if: ${{ !cancelled() && steps.maintenance_images.outcome == 'success' }}
+        uses: leodotsinc/.github/actions/maintenance-scan@902ed57f0e5288e4a0107057cb2e2ca87750a45f
+        with:
+          image: ${{ steps.maintenance_images.outputs.deps }}
+          output: maintenance-security/deps
+      - name: Retain bounded sanitized security evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: meeting-ai-release-security-${{ github.run_id }}-${{ github.run_attempt }}
+          path: maintenance-security/**/security.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Publish qualified image and build manifest
         run: |
           set -euo pipefail
