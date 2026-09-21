@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import tempfile
@@ -29,6 +30,12 @@ class MaintenanceGuardTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'METADATA_LIMIT'):
                 guard.associated_prs('test/repo', 'a' * 40)
             self.assertEqual(call.call_count, 3)
+
+    def test_discovery_has_one_configured_owner(self):
+        config = json.loads((ROOT / 'renovate.json').read_text())
+        self.assertIs(config['enabled'], True)
+        self.assertEqual(set(config['enabledManagers']), {'npm', 'dockerfile', 'github-actions'})
+        self.assertFalse((ROOT / '.github/dependabot.yml').exists())
 
     def test_dependency_and_runtime_layers(self):
         for path in ('package.json', 'yarn.lock', 'package-lock.json', 'docker/Dockerfile',

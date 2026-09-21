@@ -25,7 +25,7 @@
 
 ## Qualified maintenance adoption (cloudbox-infra PR 11)
 
-- Renovate uses the shared `leodotsinc/.github` preset and stays disabled until the Mend installation is verified and overlapping Dependabot version jobs are retired. No AI reviewer or model call is added.
+- Mend Renovate installation was verified on 2026-09-21. The shared `leodotsinc/.github` preset owns npm/lockfile, Dockerfile and workflow discovery when this branch is merged; overlapping Dependabot version jobs are removed in the same change. Dependabot vulnerability alerts remain enabled. No AI reviewer or model call is added.
 - PR and release image builds scan the immutable runtime and builder image IDs with pinned Trivy, a fresh database and bounded seven-day sanitized evidence. Unknown/stale results and high/critical findings refuse publication; passing source tests alone is insufficient.
 - The ordinary release gate inspects all commits since the last verified published release, dependency/runtime/workflow paths and GitHub associated-PR metadata. Unqualified maintenance cannot reach production through a squash merge or a later feature commit. Read-only image preparation remains available; there is no calendar or label bypass.
 - This repository's maintenance is not yet qualified for autonomous deployment. Cloudbox must bind the reviewed candidate to its policy, approved window, backup and runtime acceptance before enabling the dedicated executor. These changes do not prove installation or a production maintenance pilot.
