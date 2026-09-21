@@ -29,3 +29,9 @@
 - PR and release image builds scan the immutable runtime and builder image IDs with pinned Trivy, a fresh database and bounded seven-day sanitized evidence. Unknown/stale results and high/critical findings refuse publication; passing source tests alone is insufficient.
 - The ordinary release gate inspects all commits since the last verified published release, dependency/runtime/workflow paths and GitHub associated-PR metadata. Unqualified maintenance cannot reach production through a squash merge or a later feature commit. Read-only image preparation remains available; there is no calendar or label bypass.
 - This repository's maintenance is not yet qualified for autonomous deployment. Cloudbox must bind the reviewed candidate to its policy, approved window, backup and runtime acceptance before enabling the dedicated executor. These changes do not prove installation or a production maintenance pilot.
+
+## Isolated maintenance data qualification
+
+- `scripts/qualify-image.py` uses an internal Docker network with no published ports; HTTP probes run on loopback inside only its random-named containers. It receives no production credentials or provider destinations.
+- The fixture seeds one synthetic project/upload, captures a logical dump and upload bytes, restores into a different database and container, then verifies authenticated project reads, the existing session and exact upload hash. The original database/app stays intact. Hosted CI retains sanitized proof for seven days.
+- This qualifies disposable backup recovery for the tested image. It does not qualify a cross-version upgrade/downgrade, production role/data coverage, real provider processing, a monthly receiver, or an automatic rollout. The Node digest candidate and cumulative unreleased dependency changes retain separate review gates.

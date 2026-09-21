@@ -66,7 +66,7 @@ jobs:
             --build-arg APP_REVISION="$REVISION" --build-arg APP_BUILD_ID="$GITHUB_RUN_ID" \
             -t meeting-ai:ci-qualification -f docker/Dockerfile .
       - name: Qualify runtime and read-only migration commands
-        run: python3 scripts/qualify-image.py meeting-ai:ci-qualification
+        run: python3 scripts/qualify-image.py meeting-ai:ci-qualification > meeting-data-qualification.json
       - name: Materialize builder image for development and build package coverage
         run: docker build --platform linux/amd64 --target builder -t meeting-ai-maintenance-builder:local -f docker/Dockerfile .
       - name: Materialize dependency-stage packages
@@ -103,4 +103,12 @@ jobs:
           name: meeting-ai-review-security-${{ github.run_id }}-${{ github.run_attempt }}
           path: maintenance-security/**/security.json
           if-no-files-found: ignore
+          retention-days: 7
+      - name: Retain synthetic data qualification proof
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: meeting-ai-data-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: meeting-data-qualification.json
+          if-no-files-found: error
           retention-days: 7
