@@ -22,3 +22,10 @@
 - All mutating API handlers and detached processing must retain a deployment lease. Add coverage when adding new mutations; never bypass draining to make a rollout succeed. Production requires the protected control bind.
 - Run `npm test`, Python tests, build/typecheck and appropriate isolated qualification after changes. ESLint10 compatibility is fixed; six pre-existing React Hooks errors remain. Do not report lint passed or expand delivery work into unrelated UI refactors.
 - D1 bootstrap was verified on 2026-09-14 with v0.1.0: baseline metadata, control bind and restricted deployment access are installed; existing data, uploads and authenticated session were preserved. Do not reapply the initial bootstrap. Follow the current verified release and workflow state for routine updates. Independent disaster recovery and new provider processing remain separate, unverified acceptance steps.
+
+## Qualified maintenance adoption (cloudbox-infra PR 11)
+
+- Renovate uses the shared `leodotsinc/.github` preset and stays disabled until the Mend installation is verified and overlapping Dependabot version jobs are retired. No AI reviewer or model call is added.
+- PR and release image builds scan the immutable runtime and builder image IDs with pinned Trivy, a fresh database and bounded seven-day sanitized evidence. Unknown/stale results and high/critical findings refuse publication; passing source tests alone is insufficient.
+- The ordinary release gate inspects all commits since the last verified published release, dependency/runtime/workflow paths and GitHub associated-PR metadata. Unqualified maintenance cannot reach production through a squash merge or a later feature commit. Read-only image preparation remains available; there is no calendar or label bypass.
+- This repository's maintenance is not yet qualified for autonomous deployment. Cloudbox must bind the reviewed candidate to its policy, approved window, backup and runtime acceptance before enabling the dedicated executor. These changes do not prove installation or a production maintenance pilot.
