@@ -1,0 +1,46 @@
+name: Maintenance source admission
+on:
+  workflow_dispatch:
+    inputs:
+      request:
+        description: Closed preparation request from the Cloudbox scheduler; no rollout authority
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: meeting-maintenance-observation
+  cancel-in-progress: false
+jobs:
+  observe:
+    if: github.repository == 'leodotsinc/meeting-ai' && github.ref == 'refs/heads/main' && github.actor_id == '332011818'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Authenticate request, source proof and current published baseline
+        env:
+          REQUEST_JSON: ${{ inputs.request }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          umask 077
+          python3 -I -B - <<'PY'
+          import os,pathlib
+          raw=os.environ['REQUEST_JSON'].encode()
+          if len(raw)>16384:raise SystemExit('REQUEST_TOO_LARGE')
+          pathlib.Path('maintenance-request.json').write_bytes(raw)
+          PY
+          python3 -I -B scripts/maintenance-receiver.py maintenance-request.json maintenance-admission.json
+      - name: Retain source-only admission
+        if: ${{ !cancelled() && hashFiles('maintenance-admission.json') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: meeting-ai-maintenance-admission-${{ github.run_id }}-${{ github.run_attempt }}
+          path: maintenance-admission.json
+          retention-days: 7
+          if-no-files-found: error

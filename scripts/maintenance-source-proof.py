@@ -28,7 +28,8 @@ CODE={'.github/workflows/ci.yml','.github/workflows/deploy.yml','scripts/mainten
       'scripts/maintenance-source-proof.py','scripts/maintenance-semver.cjs',
       'scripts/maintenance-tools/package.json','scripts/maintenance-tools/package-lock.json',
       'scripts/maintenance-tools/Dockerfile','scripts/maintenance-guard.py',
-      'scripts/select-release.py','scripts/publish-release.py','scripts/release_manifest.py'}
+      'scripts/select-release.py','scripts/publish-release.py','scripts/release_manifest.py',
+      '.github/workflows/maintenance.yml','scripts/maintenance-receiver.py'}
 MAX_PROOF=128*1024
 
 def exact(value,keys,code):require(isinstance(value,dict) and set(value)==set(keys),code)
@@ -128,7 +129,7 @@ def metadata_review(delta,inputs,api,now,minimum_days):
     return {'observed_at':now.isoformat(),'latest_publication':max(publications).isoformat()},rows
 
 
-def published_baseline(api, root):
+def published_baseline(api, root, *, include_manifest=False):
     """Reuse Meeting's published-asset/tag verifier; never accept a PR baseline."""
     sys.path.insert(0,str(HERE))
     spec=importlib.util.spec_from_file_location('publisher',HERE/'publish-release.py')
@@ -141,8 +142,10 @@ def published_baseline(api, root):
     release=max(stable,key=lambda r:gate.version(r['tag_name'][1:]));tag=release['tag_name']
     ref=api.get(PREFIX+'/git/ref/tags/'+tag)
     revision=publisher.tag_commit(REPO,tag,ref)
-    result=publisher.verify_published_asset(REPO,tag,revision,release)
-    return {'commit':revision,'tag':tag,'published_manifest_sha256':result['manifest_sha256']}
+    result=publisher.verify_published_asset(REPO,tag,revision,release,include_manifest=include_manifest)
+    value={'commit':revision,'tag':tag,'published_manifest_sha256':result['manifest_sha256']}
+    if include_manifest:value['manifest']=result['manifest']
+    return value
 
 
 def emit_source(api,root,env,event,now,*,baseline_lookup=published_baseline,clock=lambda:datetime.now(timezone.utc)):

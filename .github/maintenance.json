@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "service": "meeting-ai",
+  "enabled": false,
+  "scheduler_app_id": "5019669",
+  "actor_id": "332011818",
+  "sender_id": "332011818",
+  "repository_id": 1124034527,
+  "renovate_actor_id": "29139614",
+  "policy_sha256": null,
+  "host_qualification_sha256": null,
+  "minimum_release_age_days": 14,
+  "trusted_code": {},
+  "window": {
+    "timezone": "America/Sao_Paulo",
+    "day": 1,
+    "weekday": "first_saturday",
+    "start_hour": 10,
+    "end_hour": 12,
+    "approved": true
+  }
+}
