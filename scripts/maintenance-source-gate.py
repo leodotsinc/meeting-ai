@@ -24,6 +24,18 @@ NAME = re.compile(r'(?:@[a-z0-9._-]+/)?[a-z0-9][a-z0-9._-]*\Z')
 ALLOWED = {'package.json', 'package-lock.json'}
 GROUPS = ('dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies')
 LIMIT = 16 * 1024 * 1024
+# Existing npm-ci warnings only. This is not a version range exception: both
+# complete installed entries and the exact historical edges must remain equal.
+LEGACY_PEERS = {
+    'node_modules/eslint-config-next/node_modules/eslint-plugin-import':
+        ('2.32.0', '^2 || ^3 || ^4 || ^5 || ^6 || ^7.2.0 || ^8 || ^9'),
+    'node_modules/eslint-config-next/node_modules/eslint-plugin-jsx-a11y':
+        ('6.10.2', '^3 || ^4 || ^5 || ^6 || ^7 || ^8 || ^9'),
+    'node_modules/eslint-config-next/node_modules/eslint-plugin-react':
+        ('7.37.5', '^3 || ^4 || ^5 || ^6 || ^7 || ^8 || ^9.7'),
+}
+LEGACY_SUPPORT = {'node_modules/eslint':'10.8.0', 'node_modules/eslint-config-next':'16.3.5',
+                  'node_modules/@eslint/compat':'2.1.1'}
 
 
 class Refusal(ValueError):
@@ -189,7 +201,7 @@ def effective_spec(package, origin, name, spec):
     return selected or spec
 
 
-def validate_lock(package, lock):
+def validate_lock(package, lock, *, peer_conflicts=None):
     require(isinstance(package, dict) and isinstance(lock, dict), 'MANIFEST_OBJECT_REQUIRED')
     require(set(lock) <= {'name', 'version', 'lockfileVersion', 'requires', 'packages'} and
             type(lock.get('lockfileVersion')) is int and lock['lockfileVersion'] == 3 and
@@ -226,7 +238,7 @@ def validate_lock(package, lock):
         require(len(value) == 64 and base64.b64encode(value).decode() == integrity[7:], 'INVALID_INTEGRITY')
         for group in GROUPS:
             if group in item: specs(item[group], item[group])
-    edges=[]
+    edges=[]; identities=[]
     for origin, item in packages.items():
         for group in GROUPS:
             for name, spec in item.get(group, {}).items():
@@ -235,9 +247,37 @@ def validate_lock(package, lock):
                     group == 'peerDependencies' and item.get('peerDependenciesMeta', {}).get(name, {}).get('optional') is True)
                 require(resolved is not None or optional, 'LOCK_EDGE_MISSING')
                 if resolved is not None:
-                    edges.append([packages[resolved]['version'],effective_spec(package,origin,name,spec)])
-    require(all(native_semver(edges)), 'LOCK_EDGE_VERSION_MISMATCH')
+                    effective=effective_spec(package,origin,name,spec)
+                    edges.append([packages[resolved]['version'],effective])
+                    identities.append({'origin':origin,'origin_version':item.get('version'),
+                        'group':group,'name':name,'spec':spec,'effective_spec':effective,
+                        'target':resolved,'target_version':packages[resolved]['version']})
+    for valid, edge in zip(native_semver(edges), identities):
+        if valid:continue
+        expected=LEGACY_PEERS.get(edge['origin'])
+        require(peer_conflicts is not None and expected is not None and edge['group']=='peerDependencies' and
+                edge['name']=='eslint' and edge['origin_version']==expected[0] and
+                edge['spec']==edge['effective_spec']==expected[1] and
+                edge['target']=='node_modules/eslint' and edge['target_version']=='10.8.0',
+                'LOCK_EDGE_VERSION_MISMATCH')
+        peer_conflicts.append(edge)
     return packages
+
+
+def preserved_peers(old, new, old_conflicts, new_conflicts, before, after):
+    old_conflicts=sorted(old_conflicts,key=lambda e:e['origin'])
+    new_conflicts=sorted(new_conflicts,key=lambda e:e['origin'])
+    require(old_conflicts==new_conflicts, 'PEER_CONFLICT_CHANGED')
+    if not old_conflicts:return []
+    require(len(old_conflicts)==3 and {e['origin'] for e in old_conflicts}==set(LEGACY_PEERS),
+            'PEER_CONFLICT_SET_CHANGED')
+    for path, version in {**LEGACY_SUPPORT, **{p:v[0] for p,v in LEGACY_PEERS.items()}}.items():
+        require(old.get(path)==new.get(path) and old.get(path,{}).get('version')==version,
+                'PEER_COMPATIBILITY_STACK_CHANGED')
+    config=before['files'].get('eslint.config.mjs')
+    require(isinstance(config,dict) and config.get('mode')=='100644' and
+            config==after['files'].get('eslint.config.mjs'), 'PEER_COMPATIBILITY_CONFIG_REQUIRED')
+    return old_conflicts
 
 
 def classify_source(before, after):
@@ -253,7 +293,10 @@ def classify_source(before, after):
     require({k: v for k, v in old_package.items() if k not in (*GROUPS, 'version')} ==
             {k: v for k, v in new_package.items() if k not in (*GROUPS, 'version')}, 'PACKAGE_BEHAVIOR_CHANGED')
     for group in GROUPS: specs(old_package.get(group, {}), new_package.get(group, {}))
-    old, new = validate_lock(old_package, old_lock), validate_lock(new_package, new_lock)
+    old_conflicts, new_conflicts = [], []
+    old = validate_lock(old_package, old_lock, peer_conflicts=old_conflicts)
+    new = validate_lock(new_package, new_lock, peer_conflicts=new_conflicts)
+    peers = preserved_peers(old, new, old_conflicts, new_conflicts, before, after)
     require(set(old) == set(new), 'LOCK_GRAPH_CHANGED')
     changes = []
     for path in sorted(old):
@@ -284,6 +327,7 @@ def classify_source(before, after):
               'changed_files': paths,
               'app_version_before': old_package['version'], 'app_version': new_package['version'],
               'changes': changes, 'change': 'minor' if any(c['change'] == 'minor' for c in changes) else 'patch',
+              'preserved_peer_conflicts': peers,
               'authorized_to_apply': False,
               'boundary': 'Source classification only; the consumer must authenticate the CI proof and bind the protected production baseline.'}
     result['delta_sha256'] = sha256(result)

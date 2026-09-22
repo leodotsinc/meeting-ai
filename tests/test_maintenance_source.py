@@ -118,6 +118,62 @@ class SourceGateTests(unittest.TestCase):
         self.new_lock['packages']['node_modules/bundle/node_modules/child']['version']='1.0.1'
         with self.assertRaisesRegex(gate.Refusal,'BUNDLED_SUBTREE'):self.classify()
 
+    def legacy_fixture(self):
+        for obj in (self.lock,self.new_lock):
+            for path,version in gate.LEGACY_SUPPORT.items():
+                obj['packages'][path]=item(gate.package_name(path),version,dev=True)
+            for path,(version,spec) in gate.LEGACY_PEERS.items():
+                obj['packages'][path]=item(gate.package_name(path),version,dev=True,peerDependencies={'eslint':spec})
+        self.legacy_files={'eslint.config.mjs':{'mode':'100644','oid':gate.git_oid('blob',b'synthetic immutable compat config')}}
+        self.before=snapshot(self.package,self.lock,files=self.legacy_files)
+
+    def legacy_after(self):return snapshot(self.new_package,self.new_lock,'b'*40,files=self.legacy_files)
+
+    def test_exact_three_historical_peer_conflicts_need_verified_baseline(self):
+        self.legacy_fixture()
+        with self.assertRaisesRegex(gate.Refusal,'LOCK_EDGE_VERSION_MISMATCH'):
+            gate.validate_lock(self.package,self.lock)  # No standalone blanket waiver.
+        result=gate.classify(self.before,self.legacy_after(),self.release)
+        self.assertEqual(len(result['preserved_peer_conflicts']),3)
+        self.assertEqual({e['origin'] for e in result['preserved_peer_conflicts']},set(gate.LEGACY_PEERS))
+        self.assertFalse(result['authorized_to_apply'])
+        self.release['deployment']['status']='built'
+        with self.assertRaisesRegex(gate.Refusal,'VERIFIED_PRODUCTION_BASE'):
+            gate.classify(self.before,self.legacy_after(),self.release)
+
+    def test_peer_changes_extra_error_support_drift_and_missing_config_refuse(self):
+        self.legacy_fixture();original=copy.deepcopy(self.new_lock)
+        origin=next(iter(gate.LEGACY_PEERS))
+        changes=[(origin,'version','2.32.1'),(origin,'peerDependencies',{'eslint':'^9.1'}),
+            (origin,'peerDependencies',{}),(origin,'integrity',item('other','1.0.0')['integrity']),
+            ('node_modules/eslint','version','10.8.1'),('node_modules/@eslint/compat','version','2.1.2'),
+            ('node_modules/alpha','peerDependencies',{'eslint':'^9'})]
+        for path,key,value in changes:
+            self.new_lock=copy.deepcopy(original);self.new_lock['packages'][path][key]=value
+            with self.subTest(path=path,key=key),self.assertRaises(gate.Refusal):
+                gate.classify(self.before,self.legacy_after(),self.release)
+        self.new_lock=original;self.legacy_files={}
+        before=snapshot(self.package,self.lock)
+        with self.assertRaisesRegex(gate.Refusal,'PEER_COMPATIBILITY_CONFIG_REQUIRED'):
+            gate.classify(before,self.after(),self.release)
+
+    def test_identical_but_incomplete_legacy_set_is_not_an_exception(self):
+        self.legacy_fixture()
+        origin=next(iter(gate.LEGACY_PEERS))
+        for obj in (self.lock,self.new_lock):
+            obj['packages'][origin]['peerDependencies']={}
+        self.before=snapshot(self.package,self.lock,files=self.legacy_files)
+        with self.assertRaisesRegex(gate.Refusal,'PEER_CONFLICT_SET_CHANGED'):
+            gate.classify(self.before,self.legacy_after(),self.release)
+
+    def test_current_source_graph_has_only_the_three_preserved_edges(self):
+        package=json.loads((ROOT/'package.json').read_text());lock=json.loads((ROOT/'package-lock.json').read_text())
+        conflicts=[];packages=gate.validate_lock(package,lock,peer_conflicts=conflicts)
+        self.assertEqual({row['origin'] for row in conflicts},set(gate.LEGACY_PEERS))
+        snap=snapshot(package,lock,files={'eslint.config.mjs':{'mode':'100644',
+            'oid':gate.git_oid('blob',(ROOT/'eslint.config.mjs').read_bytes())}})
+        self.assertEqual(len(gate.preserved_peers(packages,packages,conflicts,conflicts,snap,snap)),3)
+
     def test_native_tool_is_bounded_and_ignores_node_injection_environment(self):
         with patch.dict(os.environ,{'NODE_OPTIONS':'--require=/missing/untrusted','NODE_PATH':'/untrusted'}):
             self.assertEqual(gate.native_semver([['1.0.0','^1']]),[True])
