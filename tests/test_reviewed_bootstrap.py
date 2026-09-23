@@ -15,8 +15,17 @@ ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('bootstrap',ROOT/'scripts/reviewed-bootstrap.py')
 b=importlib.util.module_from_spec(spec);spec.loader.exec_module(b)
 NOW=datetime(2026,9,22,15,tzinfo=timezone.utc)
-BASE=b.g.collect(ROOT,b.BASE)
-HEAD=b.g.collect(ROOT,'560c0737b5ccd11a8ec02c54166bf1bd191e6929')
+# Fully synthetic Git snapshots: CI may have a shallow checkout and tests must
+# never fetch a production commit or network just to exercise these gates.
+from test_maintenance_source import snapshot, item
+package={'name':'meeting-fixture','version':'0.1.0','private':True,'scripts':{'test':'node --test'},'overrides':{'prisma':{'mysql2':'3.23.1'}}}
+lock={'name':'meeting-fixture','version':'0.1.0','lockfileVersion':3,'packages':{
+    '':{'name':'meeting-fixture','version':'0.1.0'},'node_modules/deepmerge-ts':item('deepmerge-ts','7.1.5')}}
+BASE=snapshot(package,lock,b.BASE)
+package=copy.deepcopy(package);package['overrides']['@prisma/config']={'deepmerge-ts':'8.0.0'}
+lock=copy.deepcopy(lock);lock['packages']['node_modules/deepmerge-ts']=item('deepmerge-ts','8.0.0')
+lock['packages']['node_modules/deepmerge-ts']['integrity']='sha512-ICNjaP0ML+eSdEpJYQC46XiAn/UjAdwbEl0dE8p85ZTeNDinN4Kd4+9jS4OSAuH7st6eC7rQhsqTF5zIDaUm2g=='
+HEAD=snapshot(package,lock,'c'*40)
 
 
 def changed(snapshot,path,data):
