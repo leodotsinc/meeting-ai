@@ -1,0 +1,78 @@
+name: Maintenance source admission
+on:
+  workflow_dispatch:
+    inputs:
+      request:
+        description: Closed preparation request from the Cloudbox scheduler; host independently revalidates
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  group: meeting-maintenance-source
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.repository == 'leodotsinc/meeting-ai' && github.ref == 'refs/heads/main' && github.actor_id == '332011818'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+    outputs:
+      context: ${{ steps.merge.outputs.context }}
+    env:
+      MAINTENANCE_REQUEST: ${{ inputs.request }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Authenticate source, baseline, policy and registered host contract
+        id: admission
+        run: python3 -I -B scripts/maintenance-pipeline.py admit
+      - name: Reserve this request before the only merge operation
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: meeting-ai-maintenance-attempt-${{ steps.admission.outputs.request_id }}
+          path: maintenance-admission.json
+          retention-days: 45
+          if-no-files-found: error
+      - name: Revalidate and merge exact H once; preserve uncertainty
+        id: merge
+        run: python3 -I -B scripts/maintenance-pipeline.py merge
+      - name: Export the exact context for the existing deploy transport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: meeting-ai-maintenance-context
+          path: maintenance-context.json
+          retention-days: 7
+          if-no-files-found: error
+      - name: Retain handoff and mutation journal
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: meeting-ai-maintenance-admission-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            maintenance-admission.json
+            maintenance-merge.json
+            maintenance-context.json
+          retention-days: 7
+          if-no-files-found: ignore
+  release:
+    needs: prepare
+    if: needs.prepare.outputs.context != ''
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+      pull-requests: read
+    uses: ./.github/workflows/deploy.yml
+    with:
+      maintenance_request: ${{ inputs.request }}
+      maintenance_context: ${{ needs.prepare.outputs.context }}
+    secrets: inherit

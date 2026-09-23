@@ -15,6 +15,73 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  source-qualification:
+    name: Dependency source proof
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.id == 29139614
+    permissions:
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # This runner never installs or executes candidate application code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Require bootstrapped trusted producer
+        id: bootstrap
+        run: |
+          if test -f scripts/maintenance-source-proof.py; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'SOURCE_PROOF_NOT_BOOTSTRAPPED; no qualification artifact'
+          fi
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        if: steps.bootstrap.outputs.ready == 'true'
+        with:
+          node-version: '26'
+      - name: Install only pinned maintenance tools
+        if: steps.bootstrap.outputs.ready == 'true'
+        run: npm ci --prefix scripts/maintenance-tools --ignore-scripts --no-audit --no-fund
+      - name: Qualify immutable dependency source
+        if: steps.bootstrap.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I -B scripts/maintenance-source-proof.py source-qualification.json
+      - name: Build disposable tool inventory
+        if: steps.bootstrap.outputs.ready == 'true'
+        id: tool-image
+        run: |
+          docker build -t meeting-maintenance-tools:ci scripts/maintenance-tools
+          echo "image=$(docker image inspect meeting-maintenance-tools:ci --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
+          npm sbom --prefix scripts/maintenance-tools --sbom-format=cyclonedx > maintenance-tools.cdx.json
+      - name: Scan pinned maintenance tool and base
+        if: steps.tool-image.outcome == 'success'
+        uses: leodotsinc/.github/actions/maintenance-scan@e9cee15fd693c658200128c127175f6e5d239838
+        with:
+          image: ${{ steps.tool-image.outputs.image }}
+          output: maintenance-tools-security
+      - name: Retain source classification
+        if: ${{ !cancelled() && hashFiles('source-qualification.json') != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: meeting-ai-source-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: source-qualification.json
+          retention-days: 45
+          if-no-files-found: error
+      - name: Retain tool inventory and scan
+        if: ${{ !cancelled() && steps.tool-image.outcome == 'success' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: meeting-ai-maintenance-tools-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            maintenance-tools.cdx.json
+            maintenance-tools-security/security.json
+          retention-days: 7
+          if-no-files-found: error
+
   qualify:
     name: Tests, migrations and build
     runs-on: ubuntu-24.04
@@ -44,6 +111,7 @@ jobs:
       - run: npm ci
       - run: npx prisma generate
       - run: node --test tests/*.test.mjs scripts/migration-check.test.mjs
+      - run: npm ci --prefix scripts/maintenance-tools --ignore-scripts --no-audit --no-fund
       - run: python3 -m unittest discover -s tests -p 'test_*.py' -v
       - run: node scripts/qualify-migrations.mjs
       - run: npm run build

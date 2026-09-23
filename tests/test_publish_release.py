@@ -170,6 +170,17 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(api.writes(), [])
         self.assertGreaterEqual(sum(any("application/octet-stream" in arg for arg in args) for args in api.calls), 1)
 
+    def test_receiver_can_read_the_same_verified_manifest_without_changing_publication(self):
+        api = FakeGitHub(self.artifact, tag={"type": "commit", "sha": REVISION}, release_exists=True)
+        with patch.object(publish_release.subprocess, "run", side_effect=api):
+            published = publish_release.api_json(f"repos/{REPO}/releases/tags/{TAG}")
+            ordinary = publish_release.verify_published_asset(REPO, TAG, REVISION, published)
+            receiver = publish_release.verify_published_asset(REPO, TAG, REVISION, published, include_manifest=True)
+        self.assertNotIn("manifest", ordinary)
+        self.assertEqual(receiver.pop("manifest"), self.manifest)
+        self.assertEqual(receiver, ordinary)
+        self.assertEqual(api.writes(), [])
+
     def test_selection_checks_verified_manifest_version_sha_and_image(self):
         for change in ("version", "sha", "image", "status", "service"):
             with self.subTest(change=change):
