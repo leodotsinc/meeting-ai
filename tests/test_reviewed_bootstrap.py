@@ -177,7 +177,11 @@ class PreparedImageAuthenticationTests(unittest.TestCase):
             rerun={**self.ci,'id':199,'run_attempt':2,'run_started_at':(NOW-timedelta(minutes=1)).isoformat(),
                 'status':'completed' if state=='failure' else 'queued','conclusion':state if state=='failure' else None}
             self.ci_runs=[self.ci,rerun]
-            with self.subTest(state=state),self.assertRaisesRegex(ValueError,'CI_REQUIRED'):self.authenticate()
+            with self.subTest(state=state),self.assertRaisesRegex(ValueError,'CI_REQUIRED|CI_PENDING'):self.authenticate()
+    def test_queued_older_run_with_old_timestamp_blocks_before_ordering(self):
+        self.ci_runs=[self.ci,{**self.ci,'id':199,'run_attempt':2,'status':'queued','conclusion':None,
+            'run_started_at':(NOW-timedelta(days=1)).isoformat()}]
+        with self.assertRaisesRegex(ValueError,'CI_PENDING'):self.authenticate()
     def test_ci_timestamp_missing_future_or_tied_is_not_ordered_by_run_id(self):
         for timestamp in (None,(NOW+timedelta(seconds=1)).isoformat(),self.ci['run_started_at']):
             self.ci_runs=[self.ci,{**self.ci,'id':199,'run_started_at':timestamp}]
@@ -185,14 +189,14 @@ class PreparedImageAuthenticationTests(unittest.TestCase):
     def test_new_rerun_between_initial_check_and_handoff_blocks(self):
         self.final_ci_runs=[self.ci,{**self.ci,'id':199,'run_attempt':2,
             'run_started_at':(NOW-timedelta(minutes=1)).isoformat(),'status':'queued','conclusion':None}]
-        with self.assertRaisesRegex(ValueError,'CI_RERUN'):self.authenticate()
+        with self.assertRaisesRegex(ValueError,'CI_RERUN|CI_PENDING'):self.authenticate()
     def test_fake_prepare_flag_replay_or_current_ci_failure_refuses_original_image(self):
         self.preparation['prepare_only']=False;self.build_archives()
         with self.assertRaisesRegex(ValueError,'PREPARATION_FLAG'):self.authenticate()
         self.preparation['prepare_only']=True;self.build_archives();self.reserved=True
         with self.assertRaisesRegex(ValueError,'ATTEMPT_RECONCILIATION'):self.authenticate()
         self.reserved=False;self.ci['conclusion']='failure'
-        with self.assertRaisesRegex(ValueError,'CI_REQUIRED'):self.authenticate()
+        with self.assertRaisesRegex(ValueError,'CI_REQUIRED|CI_PENDING'):self.authenticate()
     def test_stale_scanner_or_current_advisory_never_accepts_old_green_prepare(self):
         self.advisories={'deepmerge-ts':[{'id':1}]}
         with self.assertRaisesRegex(ValueError,'OFFICIAL_ADVISORY'):self.authenticate()

@@ -102,6 +102,7 @@ def latest_ci(api,sha,now):
     runs=listing.get('workflow_runs')
     require(isinstance(runs,list) and type(listing.get('total_count')) is int and 0<listing['total_count']==len(runs)<30,'BOOTSTRAP_CI_LIST')
     require(all(type(row.get('id')) is int and row['id']>0 and type(row.get('run_attempt')) is int and row['run_attempt']>0 for row in runs) and len({row['id'] for row in runs})==len(runs),'BOOTSTRAP_CI_LIST')
+    require(all(row.get('status')=='completed' for row in runs),'BOOTSTRAP_CI_PENDING')
     stamps=[]
     for row in runs:
         require(isinstance(row.get('run_started_at'),str),'BOOTSTRAP_CI_TIMESTAMP')
