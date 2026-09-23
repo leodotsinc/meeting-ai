@@ -124,17 +124,20 @@ class PreparedImageAuthenticationTests(unittest.TestCase):
         for stage in ('runtime','builder','deps'):
             path=self.inputs/'security'/stage/'security.json';scan=json.loads(path.read_text());scan.update(observed_at=NOW.isoformat().replace('+00:00','Z'),database_updated_at=NOW.isoformat().replace('+00:00','Z'));path.write_text(json.dumps(scan))
         self.preparation={'schema_version':1,'prepare_only':True,'run_id':123,'run_attempt':1,'source_sha':HEAD['commit'],'manifest_sha256':b.g.sha256(self.manifest)}
-        self.ci={'id':200,'head_sha':HEAD['commit'],'run_attempt':1,'path':'.github/workflows/ci.yml','event':'push',
+        self.ci={'id':200,'run_started_at':(NOW-timedelta(hours=2)).isoformat(),'head_sha':HEAD['commit'],'run_attempt':1,'path':'.github/workflows/ci.yml','event':'push',
             'status':'completed','conclusion':'success','head_repository':{'id':b.r.source.REPOSITORY_ID}}
         self.run={'id':123,'head_sha':HEAD['commit'],'run_attempt':1,'path':'.github/workflows/deploy.yml','event':'workflow_dispatch',
             'status':'completed','conclusion':'success','actor':{'id':22529012},'triggering_actor':{'id':22529012}}
-        self.metadata=[];self.archives={};self.reserved=False;self.advisories={}
+        self.metadata=[];self.archives={};self.reserved=False;self.advisories={};self.ci_runs=[self.ci];self.final_ci_runs=None;self.ci_reads=0
         self.build_archives()
         outer=self
         class API:
             def get(self,path):
                 if path.endswith('/commits/main'):return {'sha':HEAD['commit']}
-                if '/actions/workflows/ci.yml/runs?' in path:return {'total_count':1,'workflow_runs':[outer.ci]}
+                if '/actions/workflows/ci.yml/runs?' in path:
+                    outer.ci_reads+=1
+                    rows=outer.final_ci_runs if outer.ci_reads>1 and outer.final_ci_runs is not None else outer.ci_runs
+                    return {'total_count':len(rows),'workflow_runs':rows}
                 if path.endswith('/actions/runs/200'):return outer.ci
                 if path.endswith('/actions/runs/123'):return outer.run
                 if '/attempts/1/jobs?' in path:return {'total_count':2,'jobs':[{'run_id':123,'name':name,'status':'completed','conclusion':'success'} for name in ('Select verified source and version','Build and qualify exact image')]}
@@ -169,6 +172,20 @@ class PreparedImageAuthenticationTests(unittest.TestCase):
         raw,proof=self.authenticate();self.assertEqual(raw,self.raw)
         self.assertEqual(proof['prepare_run_id'],123);self.assertEqual(proof['image'],self.manifest['image'])
         self.assertFalse(proof['production_authorized']);self.assertEqual(json.loads(raw)['build']['id'],'123')
+    def test_older_run_id_with_newer_failed_or_pending_attempt_blocks(self):
+        for state in ('failure','pending'):
+            rerun={**self.ci,'id':199,'run_attempt':2,'run_started_at':(NOW-timedelta(minutes=1)).isoformat(),
+                'status':'completed' if state=='failure' else 'queued','conclusion':state if state=='failure' else None}
+            self.ci_runs=[self.ci,rerun]
+            with self.subTest(state=state),self.assertRaisesRegex(ValueError,'CI_REQUIRED'):self.authenticate()
+    def test_ci_timestamp_missing_future_or_tied_is_not_ordered_by_run_id(self):
+        for timestamp in (None,(NOW+timedelta(seconds=1)).isoformat(),self.ci['run_started_at']):
+            self.ci_runs=[self.ci,{**self.ci,'id':199,'run_started_at':timestamp}]
+            with self.subTest(timestamp=timestamp),self.assertRaisesRegex(ValueError,'CI_TIMESTAMP|CI_AMBIGUOUS'):self.authenticate()
+    def test_new_rerun_between_initial_check_and_handoff_blocks(self):
+        self.final_ci_runs=[self.ci,{**self.ci,'id':199,'run_attempt':2,
+            'run_started_at':(NOW-timedelta(minutes=1)).isoformat(),'status':'queued','conclusion':None}]
+        with self.assertRaisesRegex(ValueError,'CI_RERUN'):self.authenticate()
     def test_fake_prepare_flag_replay_or_current_ci_failure_refuses_original_image(self):
         self.preparation['prepare_only']=False;self.build_archives()
         with self.assertRaisesRegex(ValueError,'PREPARATION_FLAG'):self.authenticate()

@@ -97,12 +97,25 @@ def artifact(api,run,attempt,name,files):
         return {name:z.read(name) for name in files},linked
 
 
+def latest_ci(api,sha,now):
+    listing=api.get(r.PREFIX+'/actions/workflows/ci.yml/runs?head_sha='+sha+'&per_page=30')
+    runs=listing.get('workflow_runs')
+    require(isinstance(runs,list) and type(listing.get('total_count')) is int and 0<listing['total_count']==len(runs)<30,'BOOTSTRAP_CI_LIST')
+    require(all(type(row.get('id')) is int and row['id']>0 and type(row.get('run_attempt')) is int and row['run_attempt']>0 for row in runs) and len({row['id'] for row in runs})==len(runs),'BOOTSTRAP_CI_LIST')
+    stamps=[]
+    for row in runs:
+        require(isinstance(row.get('run_started_at'),str),'BOOTSTRAP_CI_TIMESTAMP')
+        stamp=r.source.stamp(row['run_started_at'])
+        require(stamp<=now,'BOOTSTRAP_CI_TIMESTAMP');stamps.append(stamp)
+    latest=max(stamps)
+    require(stamps.count(latest)==1,'BOOTSTRAP_CI_AMBIGUOUS')
+    return runs[stamps.index(latest)]
+
+
 def authenticate(request,config,env,event,api,root,*,now_fn=clock):
     started=now_fn();envelope(request,config,env,event,started);sha=request['source_sha'];rid=request['prepare_run_id'];attempt=request['prepare_run_attempt']
     require(api.get(r.PREFIX+'/commits/main').get('sha')==sha,'BOOTSTRAP_MAIN_DRIFT')
-    ci=api.get(r.PREFIX+'/actions/workflows/ci.yml/runs?head_sha='+sha+'&per_page=30')
-    runs=ci.get('workflow_runs');require(isinstance(runs,list) and type(ci.get('total_count')) is int and 0<ci['total_count']==len(runs)<30,'BOOTSTRAP_CI_LIST')
-    latest=max(runs,key=lambda row:row['id'])
+    latest=latest_ci(api,sha,now_fn())
     require(latest.get('head_sha')==sha and latest.get('path')=='.github/workflows/ci.yml' and latest.get('event')=='push' and latest.get('status')=='completed' and latest.get('conclusion')=='success' and latest.get('head_repository',{}).get('id')==r.source.REPOSITORY_ID,'BOOTSTRAP_CI_REQUIRED')
     baseline=r.source.published_baseline(api,root,include_manifest=True)['manifest']
     require(baseline['git_sha']==BASE and g.sha256(baseline)==request['baseline_receipt_sha256'],'BOOTSTRAP_BASELINE_DRIFT')
@@ -155,6 +168,8 @@ def authenticate(request,config,env,event,api,root,*,now_fn=clock):
     require(api.get(r.PREFIX+'/commits/main').get('sha')==sha,'BOOTSTRAP_FINAL_MAIN_DRIFT')
     final_prepare=api.get(r.PREFIX+f'/actions/runs/{rid}')
     require(all(final_prepare.get(k)==run.get(k) for k in ('id','head_sha','run_attempt','status','conclusion')),'BOOTSTRAP_PREPARE_RERUN')
+    final_selection=latest_ci(api,sha,now_fn())
+    require(all(final_selection.get(k)==latest.get(k) for k in ('id','head_sha','run_attempt','run_started_at','status','conclusion')),'BOOTSTRAP_CI_RERUN')
     final_ci=api.get(r.PREFIX+'/actions/runs/'+str(latest['id']))
     require(all(final_ci.get(k)==latest.get(k) for k in ('id','head_sha','run_attempt','status','conclusion')),'BOOTSTRAP_CI_RERUN')
     envelope(request,config,env,event,now_fn());require(now_fn()-started<=timedelta(minutes=5),'BOOTSTRAP_METADATA_EXPIRED')
