@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Authenticate a monthly preparation request and existing CI proof; no mutation.
 
-This read-only receiver is not a host executor, merge authority or release event.
-The existing Deploy/helper remains the only app release path. The source graph
+The pipeline module uses this read-only admission before its single merge and
+existing Deploy handoff. This module grants no host authority. The source graph
 is classified once in isolated CI; this consumer authenticates that proof and
 refreshes official metadata/advisories, never runs candidate code or a new parser.
 """
@@ -28,9 +28,9 @@ gate = source.gate; require = gate.require; exact = source.exact
 REPO = source.REPO; PREFIX = source.PREFIX
 HASH = re.compile(r'[0-9a-f]{64}\Z')
 CONFIG_KEYS = {'schema_version','service','enabled','scheduler_app_id','actor_id','sender_id','repository_id',
-    'renovate_actor_id','policy_sha256','host_qualification_sha256','minimum_release_age_days','trusted_code','window'}
+    'renovate_actor_id','policy_sha256','host_qualification_sha256','host_contract_sha256','minimum_release_age_days','trusted_code','window'}
 REQUEST_KEYS = {'schema_version','service','phase','request_id','issued_at','expires_at','policy_sha256',
-    'window','source_pr','baseline','base_manifest'}
+    'window','source_pr','baseline','base_manifest','infra_commit','config_sha256','host_contract_sha256','source_proof','policy'}
 JOBS = {'Dependency source proof','Tests, migrations and build','Exact image, authentication and safe migration bootstrap'}
 
 
@@ -54,6 +54,14 @@ def validate_request(request, config, env, event, now):
         and event.get('sender',{}).get('id')==332011818 and event['sender'].get('type')=='Bot', 'SCHEDULER_IDENTITY')
     require(type(request['schema_version']) is int and request['schema_version']==1
         and request['service']=='meeting-ai' and request['phase']=='prepare', 'PREPARATION_ONLY')
+    require(isinstance(config['host_contract_sha256'],str) and HASH.fullmatch(config['host_contract_sha256'])
+        and request['host_contract_sha256']==config['host_contract_sha256'], 'HOST_CONTRACT_NOT_REGISTERED')
+    require(isinstance(request['infra_commit'], str) and gate.SHA.fullmatch(request['infra_commit'])
+        and request['config_sha256']==gate.sha256(config), 'INFRA_OR_CONFIG_REFERENCE')
+    exact(request['source_proof'], {'run_id','run_attempt','artifact_id','digest'}, 'SOURCE_PROOF_REFERENCE')
+    reference=request['source_proof']
+    require(all(type(reference[k]) is int and reference[k]>0 for k in ('run_id','run_attempt','artifact_id'))
+        and isinstance(reference['digest'],str) and re.fullmatch(r'sha256:[0-9a-f]{64}',reference['digest']), 'SOURCE_PROOF_REFERENCE')
     exact(request['source_pr'], {'number','base_sha','head_sha','tree_sha'}, 'PR_SCHEMA')
     pr=request['source_pr']
     require(type(pr['number']) is int and 0<pr['number']<1000000 and
@@ -70,6 +78,7 @@ def validate_request(request, config, env, event, now):
         baseline=={'git_sha':manifest['git_sha'],'image':manifest['image'],'receipt_sha256':gate.sha256(manifest)}, 'BASELINE_BINDING')
     identity={'app':'meeting-ai','baseline_receipt_sha256':baseline['receipt_sha256'],
               'head_sha':pr['head_sha'],'tree_sha':pr['tree_sha']}
+    require(isinstance(request['policy'],dict) and gate.sha256(request['policy'])==request['policy_sha256'], 'POLICY_CONTENT_HASH')
     require(request['request_id']==gate.sha256(identity) and isinstance(request['policy_sha256'],str)
         and HASH.fullmatch(request['policy_sha256']) and request['policy_sha256']==config['policy_sha256'], 'REQUEST_OR_POLICY_HASH')
     exact(config['trusted_code'], source.CODE, 'CODE_PINS_REQUIRED')
@@ -82,6 +91,18 @@ def validate_request(request, config, env, event, now):
     require(local.weekday()==5 and local.day<=7 and start<=issued<=now<expires<=end and
         expires-issued<=timedelta(hours=1) and request['window']['timezone']=='America/Sao_Paulo'
         and source.stamp(request['window']['start'])==start and source.stamp(request['window']['end'])==end, 'WINDOW_OR_TTL')
+
+
+def policy_change(request,change,now):
+    policy=request['policy'];qualification=policy.get('qualification');normal=policy.get('normal',{})
+    require(policy.get('id')=='meeting-ai' and policy.get('kind')=='first_party' and isinstance(qualification,dict)
+        and qualification.get('runtime_pilot') is True and qualification.get('scope','dependency_updates')=='dependency_updates'
+        and (policy.get('coverage')=='auto_qualified' or policy.get('coverage')=='review_required' and qualification.get('scope')=='dependency_updates')
+        and source.stamp(qualification['valid_until'])>now and isinstance(policy.get('review_on'),str)
+        and policy['review_on']>=now.date().isoformat(),'POLICY_EXECUTION_SCOPE')
+    allowed=normal.get('allowed_changes')
+    require(isinstance(allowed,list) and allowed and all(v in ('patch','minor','digest','lockfile') for v in allowed)
+        and change in ('patch','minor') and change in allowed,'CHANGE_NOT_AUTHORIZED')
 
 
 class API(source.API):
@@ -127,7 +148,7 @@ def ci_proof(api, request, config, now):
         run.get('head_sha')==head and run.get('event')=='pull_request' and run.get('status')=='completed'
         and run.get('conclusion')=='success' and run.get('path')=='.github/workflows/ci.yml'
         and run.get('head_repository',{}).get('id')==source.REPOSITORY_ID, 'EXACT_CI_REQUIRED')
-    fresh(run['updated_at'],now,timedelta(hours=24))
+    require(source.stamp(run['updated_at'])<=now, 'FUTURE_SOURCE_PROOF')
     jobs=api.get(PREFIX+f'/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100')
     require(jobs.get('total_count')==len(JOBS) and isinstance(jobs.get('jobs'),list) and len(jobs['jobs'])==len(JOBS)
         and {j.get('name') for j in jobs['jobs']}==JOBS and all(j.get('status')=='completed'
@@ -155,17 +176,26 @@ def ci_proof(api, request, config, now):
         and proof.get('trusted_commit')==request['source_pr']['base_sha'] and proof.get('tree_sha')==request['source_pr']['tree_sha']
         and proof.get('source_pr')=={'number':request['source_pr']['number'],'bot_id':29139614}
         and proof.get('code_sha256')==config['trusted_code'], 'SOURCE_PROOF_IDENTITY')
-    fresh(proof['observed_at'],now,timedelta(hours=24))
+    require(source.stamp(proof['observed_at'])<=now, 'FUTURE_SOURCE_PROOF')
     return proof, run, {'id':metadata['id'],'digest':metadata['digest']}
 
 
-def observe(request,config,env,event,api,root,now,*,clock=lambda:datetime.now(timezone.utc),baseline_lookup=source.published_baseline):
+def observe(request,config,env,event,api,root,now,*,clock=lambda:datetime.now(timezone.utc),baseline_lookup=source.published_baseline,merged_sha=None):
     validate_request(request,config,env,event,now)
     identity=api.get(PREFIX); require(identity.get('id')==source.REPOSITORY_ID and identity.get('full_name')==REPO,'REPOSITORY_IDENTITY')
     baseline=baseline_lookup(api,root,include_manifest=True)
     require(baseline['manifest']==request['base_manifest'],'PUBLISHED_BASELINE_DRIFT')
-    pr=request['source_pr']; live=api.get(PREFIX+'/pulls/'+str(pr['number']))
-    require(live.get('state')=='open' and live.get('draft') is False and live.get('merged') is False
+    pr=request['source_pr']
+    expected_main=merged_sha or pr['base_sha']
+    def expected_pr(value):
+        return (value.get('state')=='closed' and value.get('merged') is True and value.get('merge_commit_sha')==merged_sha) if merged_sha else (value.get('state')=='open' and value.get('merged') is False)
+    if merged_sha:
+        require(isinstance(merged_sha,str) and gate.SHA.fullmatch(merged_sha), 'MERGE_IDENTITY_UNKNOWN')
+        commit=api.get(PREFIX+'/commits/'+merged_sha)
+        require(commit.get('sha')==merged_sha and [p.get('sha') for p in commit.get('parents',[])]==[pr['base_sha'],pr['head_sha']]
+            and commit.get('commit',{}).get('tree',{}).get('sha')==pr['tree_sha'], 'MERGE_IDENTITY_UNKNOWN')
+    live=api.get(PREFIX+'/pulls/'+str(pr['number']))
+    require(expected_pr(live) and live.get('draft') is False
         and live.get('user',{}).get('id')==29139614 and live['user'].get('login')=='renovate[bot]'
         and live['user'].get('type')=='Bot' and live.get('base',{}).get('ref')=='main','RENOVATE_PR_REQUIRED')
     for side,key in (('base','base_sha'),('head','head_sha')):
@@ -177,10 +207,13 @@ def observe(request,config,env,event,api,root,now,*,clock=lambda:datetime.now(ti
         raw=(root/path).read_bytes(); entry={'mode':'100644','oid':gate.git_oid('blob',raw)}
         require(hashlib.sha256(raw).hexdigest()==expected and all(s['files'].get(path)==entry for s in snapshots.values()), 'TRUSTED_CODE_DRIFT')
     proof,run,artifact=ci_proof(api,request,config,now)
+    require(request['source_proof']=={'run_id':run['id'],'run_attempt':run['run_attempt'],
+        'artifact_id':artifact['id'],'digest':artifact['digest']}, 'SOURCE_PROOF_REFERENCE_DRIFT')
     source.workflow_identity(api,proof['workflow_commit'],pr['base_sha'],pr['head_sha'],pr['tree_sha'])
     require(hashlib.sha256(source.blob(api,'.github/workflows/ci.yml',proof['workflow_commit'])).hexdigest()==config['trusted_code']['.github/workflows/ci.yml'],'WORKFLOW_CODE_DRIFT')
     require(proof['baseline']=={k:v for k,v in baseline.items() if k!='manifest'},'SOURCE_BASELINE_DRIFT')
     delta=proof['classification']
+    policy_change(request,delta.get('change'),clock())
     require(delta.get('delta_sha256')==gate.sha256({k:v for k,v in delta.items() if k!='delta_sha256'})
         and delta.get('base_commit')==baseline['commit'] and delta.get('base_tree')==snapshots[baseline['commit']]['tree']
         and delta.get('candidate_commit')==pr['head_sha'] and delta.get('candidate_tree')==pr['tree_sha']
@@ -188,26 +221,27 @@ def observe(request,config,env,event,api,root,now,*,clock=lambda:datetime.now(ti
     changed=sorted(p for p in snapshots[baseline['commit']]['files'].keys()|snapshots[pr['head_sha']]['files'].keys()
         if snapshots[baseline['commit']]['files'].get(p)!=snapshots[pr['head_sha']]['files'].get(p))
     require(changed==delta['changed_files'] and changed and set(changed)<=gate.ALLOWED,'CUMULATIVE_FEATURE_OR_CONTROL_DELTA')
-    observed=clock(); registry,_=source.metadata_review(delta,proof['metadata_inputs'],api,observed,14)
+    observed=clock(); registry,registry_rows=source.metadata_review(delta,proof['metadata_inputs'],api,observed,14)
     require(api.read('https://registry.npmjs.org/-/npm/v1/security/advisories/bulk',payload=proof['advisory_packages'])=={},'OFFICIAL_ADVISORY_REVIEW')
     latest=api.get(PREFIX+'/pulls/'+str(pr['number'])); latest_run=api.get(PREFIX+'/actions/runs/'+str(run['id']))
     latest_runs=api.get(PREFIX+'/actions/workflows/ci.yml/runs?head_sha='+pr['head_sha']+'&per_page=30')
     require(latest_runs.get('total_count')==len(latest_runs.get('workflow_runs',[])) and
         0<latest_runs['total_count']<30 and max(r['id'] for r in latest_runs['workflow_runs'])==run['id'], 'NEW_CI_RUN')
-    require(api.get(PREFIX+'/commits/main').get('sha')==pr['base_sha'] and latest.get('state')=='open'
+    require(api.get(PREFIX+'/commits/main').get('sha')==expected_main and expected_pr(latest)
         and latest.get('head',{}).get('sha')==pr['head_sha'] and latest.get('base',{}).get('sha')==pr['base_sha']
         and latest_run.get('run_attempt')==run['run_attempt'] and latest_run.get('status')=='completed'
         and latest_run.get('conclusion')=='success'
         and latest_run.get('head_sha')==pr['head_sha'],'FINAL_REF_OR_CI_DRIFT')
     require(baseline_lookup(api,root,include_manifest=True)==baseline,'FINAL_PUBLISHED_BASELINE_DRIFT')
-    finished=clock(); validate_request(request,config,env,event,finished)
-    fresh(proof['observed_at'],finished,timedelta(hours=24)); fresh(run['updated_at'],finished,timedelta(hours=24))
+    finished=clock(); validate_request(request,config,env,event,finished);policy_change(request,delta['change'],finished)
+    require(source.stamp(proof['observed_at'])<=finished and source.stamp(run['updated_at'])<=finished, 'FUTURE_SOURCE_PROOF')
     fresh(registry['observed_at'],finished,timedelta(minutes=5))
     require(timedelta(0)<=finished-now<=timedelta(minutes=3),'RECEIVER_DEADLINE')
     return {'schema_version':1,'service':'meeting-ai','request_id':request['request_id'],'status':'source_ready',
         'source_pr':pr,'baseline':request['baseline'],'policy_sha256':request['policy_sha256'],
+        'infra_commit':request['infra_commit'],'config_sha256':request['config_sha256'],'source_proof':request['source_proof'],
         'source_artifact':artifact,'evidence_run_id':run['id'],'evidence_run_attempt':run['run_attempt'],
-        'delta_sha256':delta['delta_sha256'],'observed_at':finished.isoformat(),'registry':registry,
+        'delta_sha256':delta['delta_sha256'],'change':delta['change'],'scope':'dependency_updates','observed_at':finished.isoformat(),'registry':registry,'registry_rows':registry_rows,
         'merge_authorized':False,'deployment_authorized':False,
         'blocker':'MONTHLY_HOST_EXECUTOR_AND_RELEASE_HANDOFF_NOT_QUALIFIED'}
 

@@ -5,6 +5,7 @@ Only newly created, random-named containers/network are removed. No prune, host
 production ports, existing database, actual accounts or external AI providers.
 """
 import base64
+from datetime import datetime, timezone
 import hashlib
 from http.cookies import SimpleCookie
 import json
@@ -199,6 +200,7 @@ def qualify(image):
         run('docker','exec','-u','0',app,'rm','/run/cloudbox/deploy/draining')
         assert run('docker','exec',app,'sh','-c','ls -A /run/cloudbox/deploy/leases')==''
         print(json.dumps({'ok':True,'image_id':info['Id'],'version':metadata['version'],
+            'revision':metadata['revision'],'build_id':metadata['build_id'],'observed_at':datetime.now(timezone.utc).isoformat(),
             'migration_checks':migration_proof['checks'],
             'migration_readonly_image':True,'checks':['readiness_database','anonymous_auth_boundary','fixture_login',
                       'authenticated_version','runtime_database_stats','drain_blocks_mutations','leases_released'],

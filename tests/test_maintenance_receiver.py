@@ -82,7 +82,7 @@ class ReceiverTests(unittest.TestCase):
             verified_at='2026-09-20T03:02:00Z',observed_image=built['image'])
         self.baseline={'commit':self.base,'tag':'v0.1.5','published_manifest_sha256':'a'*64,'manifest':self.manifest}
         self.config=json.loads((ROOT/'.github/maintenance.json').read_text())
-        self.config.update(enabled=True,host_qualification_sha256='b'*64,policy_sha256='c'*64,
+        self.config.update(enabled=True,host_contract_sha256='e'*64,host_qualification_sha256='b'*64,policy_sha256='c'*64,
             trusted_code={p:hashlib.sha256((self.root/p).read_bytes()).hexdigest() for p in r.source.CODE})
         self.env={'GITHUB_REPOSITORY':r.REPO,'GITHUB_REF':'refs/heads/main','GITHUB_EVENT_NAME':'workflow_dispatch',
             'GITHUB_RUN_ATTEMPT':'1','GITHUB_RUN_ID':'456','GITHUB_SHA':self.base,'GITHUB_ACTOR_ID':'332011818',
@@ -98,6 +98,13 @@ class ReceiverTests(unittest.TestCase):
             'source_pr':{'number':12,'base_sha':self.base,'head_sha':self.head,'tree_sha':self.proof['tree_sha']},
             'baseline':baseline,'base_manifest':self.manifest}
         self.api=API(self)
+        self.request['policy']={'id':'meeting-ai','kind':'first_party','coverage':'review_required','review_on':'2026-10-10',
+            'normal':{'allowed_changes':['patch','minor']},'qualification':{'scope':'dependency_updates','runtime_pilot':True,'valid_until':'2026-10-10T00:00:00Z'}}
+        self.config['policy_sha256']=self.request['policy_sha256']=r.gate.sha256(self.request['policy'])
+        self.bind_reference()
+    def bind_reference(self):
+        self.request.update(infra_commit='f'*40,host_contract_sha256='e'*64,config_sha256=r.gate.sha256(self.config),
+            source_proof={'run_id':123,'run_attempt':1,'artifact_id':19,'digest':self.api.artifact['digest']})
     def observe(self,clock=lambda:NOW,baseline_lookup=None):
         with patch('socket.socket',side_effect=AssertionError('No network in synthetic receiver tests')):
             return r.observe(self.request,self.config,self.env,self.event,self.api,self.root,NOW,clock=clock,
@@ -134,16 +141,16 @@ class ReceiverTests(unittest.TestCase):
         with patch.dict(self.api.artifact['workflow_run'],{'repository_id':1}),self.assertRaisesRegex(ValueError,'ARTIFACT_RUN_BINDING'):self.observe()
     def test_tampered_digest_extra_zip_file_and_refused_source_are_never_ready(self):
         with patch.dict(self.api.artifact,{'digest':'sha256:'+'0'*64}),self.assertRaisesRegex(ValueError,'ARTIFACT_DIGEST'):self.observe()
-        self.api.pack(extra=True)
+        self.api.pack(extra=True);self.bind_reference()
         with self.assertRaisesRegex(ValueError,'ARTIFACT_FILES'):self.observe()
-        self.proof['status']='refused';self.proof['code']='NON_DEPENDENCY_FILE';self.api.pack()
+        self.proof['status']='refused';self.proof['code']='NON_DEPENDENCY_FILE';self.api.pack();self.bind_reference()
         with self.assertRaisesRegex(ValueError,'SOURCE_PROOF_IDENTITY'):self.observe()
     def test_changed_trusted_code_or_delta_bound_to_another_tree_refuses(self):
         for key,value in (('code_sha256',{}),('tree_sha','f'*40),('trusted_commit','f'*40)):
-            old=self.proof[key];self.proof[key]=value;self.api.pack()
+            old=self.proof[key];self.proof[key]=value;self.api.pack();self.bind_reference()
             with self.subTest(key=key),self.assertRaisesRegex(ValueError,'SOURCE_PROOF_IDENTITY'):self.observe()
             self.proof[key]=old
-        self.api.pack();(self.root/'scripts/maintenance-receiver.py').write_text('# changed trusted code')
+        self.api.pack();self.bind_reference();(self.root/'scripts/maintenance-receiver.py').write_text('# changed trusted code')
         with self.assertRaisesRegex(ValueError,'TRUSTED_CODE_DRIFT'):self.observe()
     def test_cumulative_feature_cannot_hide_behind_a_dependency_only_proof(self):
         before=self.api.snapshots[self.base]
@@ -151,7 +158,7 @@ class ReceiverTests(unittest.TestCase):
         before['tree']=r.gate.tree_oid(before['files'])
         self.proof['classification']['base_tree']=before['tree']
         delta=self.proof['classification'];delta['delta_sha256']=r.gate.sha256({k:v for k,v in delta.items() if k!='delta_sha256'})
-        self.api.pack()
+        self.api.pack();self.bind_reference()
         with self.assertRaisesRegex(ValueError,'CUMULATIVE_FEATURE_OR_CONTROL_DELTA'):self.observe()
     def test_registry_and_advisory_are_refreshed_and_fail_closed(self):
         for fault,code in (('advisory','OFFICIAL_ADVISORY_REVIEW'),('metadata','INSTALL_SCRIPT_REQUIRES_REVIEW')):
@@ -164,10 +171,10 @@ class ReceiverTests(unittest.TestCase):
             return value
         with patch.object(self.api,'package',side_effect=immature),self.assertRaisesRegex(ValueError,'NPM_RELEASE_TOO_YOUNG_OR_FUTURE'):self.observe()
     def test_final_freshness_window_baseline_and_concurrent_rerun_are_rechecked(self):
-        self.proof['observed_at']=(NOW-timedelta(hours=24)+timedelta(seconds=1)).isoformat();self.api.pack()
-        with self.assertRaisesRegex(ValueError,'STALE_OR_FUTURE_PROOF'):
+        self.proof['observed_at']=(NOW+timedelta(seconds=3)).isoformat();self.api.pack();self.bind_reference()
+        with self.assertRaisesRegex(ValueError,'FUTURE_SOURCE_PROOF'):
             self.observe(clock=lambda:NOW+timedelta(seconds=2))
-        self.proof['observed_at']=NOW.isoformat();self.api.pack()
+        self.proof['observed_at']=NOW.isoformat();self.api.pack();self.bind_reference()
         with self.assertRaisesRegex(ValueError,'WINDOW_OR_TTL'):
             self.observe(clock=lambda:NOW+timedelta(minutes=46))
         calls=[]
@@ -226,14 +233,17 @@ class TransportTests(unittest.TestCase):
         with patch.object(r.subprocess,'run') as run,self.assertRaisesRegex(ValueError,'ARTIFACT_METADATA'):
             api.artifact_bytes(dict(metadata,id='../../other'))
         run.assert_not_called()
-    def test_workflow_has_only_read_authority_and_default_config_is_disabled(self):
+    def test_workflow_reuses_deploy_and_default_config_is_disabled(self):
         raw=(ROOT/'.github/workflows/maintenance.yml').read_text()
         self.assertIn('actions: read',raw);self.assertIn('contents: read',raw)
-        self.assertNotIn(': write',raw);self.assertNotIn('secrets.',raw);self.assertNotIn('deploy.yml',raw)
+        self.assertIn('uses: ./.github/workflows/deploy.yml',raw)
+        self.assertIn('retention-days: 45',raw)
+        self.assertIn('scripts/maintenance-pipeline.py admit',raw)
+        self.assertIn('scripts/maintenance-pipeline.py merge',raw)
         self.assertNotIn('npm ',raw);self.assertNotIn('yarn ',raw)
         self.assertIn('ref: ${{ github.sha }}',raw)
         config=json.loads((ROOT/'.github/maintenance.json').read_text())
-        self.assertFalse(config['enabled']);self.assertIsNone(config['host_qualification_sha256'])
+        self.assertFalse(config['enabled']);self.assertIsNone(config['host_qualification_sha256']);self.assertIsNone(config['host_contract_sha256'])
         self.assertIsNone(config['policy_sha256']);self.assertEqual(config['trusted_code'],{})
 
 

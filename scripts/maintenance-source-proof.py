@@ -29,7 +29,7 @@ CODE={'.github/workflows/ci.yml','.github/workflows/deploy.yml','scripts/mainten
       'scripts/maintenance-tools/package.json','scripts/maintenance-tools/package-lock.json',
       'scripts/maintenance-tools/Dockerfile','scripts/maintenance-guard.py',
       'scripts/select-release.py','scripts/publish-release.py','scripts/release_manifest.py',
-      '.github/workflows/maintenance.yml','scripts/maintenance-receiver.py'}
+      '.github/workflows/maintenance.yml','scripts/maintenance-receiver.py','scripts/maintenance-pipeline.py','scripts/maintenance-release-proof.py','scripts/qualify-image.py'}
 MAX_PROOF=128*1024
 
 def exact(value,keys,code):require(isinstance(value,dict) and set(value)==set(keys),code)

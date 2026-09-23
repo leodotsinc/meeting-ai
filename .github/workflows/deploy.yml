@@ -1,6 +1,21 @@
 name: Deploy
 
 on:
+  workflow_call:
+    inputs:
+      maintenance_request:
+        type: string
+        required: true
+      maintenance_context:
+        type: string
+        required: true
+    secrets:
+      MEETING_DEPLOY_KEY:
+        required: true
+      MEETING_SSH_KNOWN_HOSTS:
+        required: true
+      CLOUDBOX_INFRA_RECONCILE_PRIVATE_KEY:
+        required: true
   workflow_run:
     workflows: [CI]
     branches: [main]
@@ -35,12 +50,27 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
-      sha: ${{ steps.source.outputs.sha }}
+      sha: ${{ steps.maintenance.outputs.sha || steps.source.outputs.sha }}
       version: ${{ steps.version.outputs.version }}
       released: ${{ steps.version.outputs.already_released }}
     steps:
+      - name: Load trusted producer for maintenance handoff
+        if: inputs.maintenance_context != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Authenticate maintenance handoff before any candidate checkout or build
+        id: maintenance
+        if: inputs.maintenance_context != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAINTENANCE_REQUEST: ${{ inputs.maintenance_request }}
+          MAINTENANCE_CONTEXT: ${{ inputs.maintenance_context }}
+        run: python3 -I -B scripts/maintenance-pipeline.py preflight
       - name: Require current main and exact successful CI
         id: source
+        if: inputs.maintenance_context == ''
         env:
           GH_TOKEN: ${{ github.token }}
           REQUEST_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -57,10 +87,11 @@ jobs:
           echo "sha=$REQUEST_SHA" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ steps.source.outputs.sha }}
+          ref: ${{ steps.maintenance.outputs.sha || steps.source.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Refuse unqualified maintenance before ordinary deployment
+        if: inputs.maintenance_context == ''
         env:
           GH_TOKEN: ${{ github.token }}
           PREPARE_ONLY: ${{ inputs.prepare_only }}
@@ -104,7 +135,14 @@ jobs:
             -t "$image" -f docker/Dockerfile .
           echo "$image" > image-tag.txt
       - name: Verify runtime, authentication boundary and drain
-        run: python3 scripts/qualify-image.py "$(cat image-tag.txt)"
+        run: python3 scripts/qualify-image.py "$(cat image-tag.txt)" > meeting-functional.json
+      - name: Retain the existing functional harness result
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: meeting-ai-release-functional-${{ github.run_id }}-${{ github.run_attempt }}
+          path: meeting-functional.json
+          retention-days: 7
+          if-no-files-found: error
       - name: Materialize builder image for development and build package coverage
         run: docker build --platform linux/amd64 --target builder -t meeting-ai-maintenance-builder:local -f docker/Dockerfile .
       - name: Materialize dependency-stage packages
@@ -154,28 +192,84 @@ jobs:
             --git-sha "$RELEASE_SHA" --image "$digest" --source-repository "https://github.com/$GITHUB_REPOSITORY" \
             --build-id "$GITHUB_RUN_ID" --build-attempt "$GITHUB_RUN_ATTEMPT" \
             --built-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > release.json
+          python3 - <<'PYCODE'
+          import json,os,subprocess,pathlib
+          manifest=json.loads(pathlib.Path('release.json').read_text())
+          image_id=subprocess.check_output(['docker','image','inspect',manifest['image'],'--format','{{.Id}}'],text=True).strip()
+          pathlib.Path('release-image.json').write_text(json.dumps({'image':manifest['image'],'image_id':image_id,
+              'source_commit':manifest['git_sha'],'version':manifest['release_version'],
+              'run_id':int(os.environ['GITHUB_RUN_ID']),'run_attempt':int(os.environ['GITHUB_RUN_ATTEMPT'])}))
+          PYCODE
       - name: Identify this build attempt
         id: artifact
         run: echo "name=meeting-release-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.artifact.outputs.name }}
-          path: release.json
+          path: |
+            release.json
+            release-image.json
           if-no-files-found: error
           retention-days: 30
 
-  rollout:
-    if: github.event_name != 'workflow_dispatch' || inputs.prepare_only == false
-    name: Backup, preflight and controlled rollout
+  maintenance_evidence:
+    name: Refresh official maintenance metadata
+    if: inputs.maintenance_context != ''
     needs: [gate, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: maintenance-inputs
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: meeting-ai-release-functional-${{ github.run_id }}-${{ github.run_attempt }}
+          path: maintenance-inputs
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: meeting-ai-release-security-${{ github.run_id }}-${{ github.run_attempt }}
+          path: maintenance-inputs/security
+      - name: Bind immutable release to source proof and fresh official metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAINTENANCE_REQUEST: ${{ inputs.maintenance_request }}
+          MAINTENANCE_CONTEXT: ${{ inputs.maintenance_context }}
+        run: python3 -I -B scripts/maintenance-pipeline.py refresh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: meeting-ai-maintenance-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: maintenance-release.json
+          retention-days: 7
+          if-no-files-found: error
+
+  rollout:
+    if: >-
+      !cancelled() && needs.gate.result == 'success' && needs.build.result == 'success' &&
+      ((inputs.maintenance_context == '' && (github.event_name != 'workflow_dispatch' || inputs.prepare_only == false)) ||
+       (inputs.maintenance_context != '' && needs.maintenance_evidence.result == 'success'))
+    name: Backup, preflight and controlled rollout
+    needs: [gate, build, maintenance_evidence]
     permissions:
       contents: read
       packages: read
-    uses: leodotsinc/.github/.github/workflows/deploy.yml@247880b24e80ab791b9e2e82dd33ccad7981c053
+      actions: read
+    uses: leodotsinc/.github/.github/workflows/deploy.yml@b365d0ee1235a0406ec1fc6fecdd6bfd8856dac9
     with:
       app_id: meeting-ai
       release_artifact: ${{ needs.build.outputs.artifact_name }}
       release_file: release.json
+      maintenance_artifact: ${{ inputs.maintenance_context != '' && 'meeting-ai-maintenance-context' || '' }}
+      maintenance_file: maintenance-context.json
       release_sha: ${{ needs.gate.outputs.sha }}
       vps_host: ${{ vars.VPS_IP }}
       ssh_port: ${{ vars.SSH_PORT }}

@@ -18,5 +18,6 @@
     "start_hour": 10,
     "end_hour": 12,
     "approved": true
-  }
+  },
+  "host_contract_sha256": null
 }
