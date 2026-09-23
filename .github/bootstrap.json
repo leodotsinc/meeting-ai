@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "service": "meeting-ai",
+  "enabled": false,
+  "baseline_commit": "99f2069dab3c652620e6ee7a48951c67009aa5e9"
+}

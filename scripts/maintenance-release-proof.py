@@ -21,7 +21,7 @@ def read(path):
     raw=path.read_bytes();return gate.decode(raw.decode()),hashlib.sha256(raw).hexdigest()
 
 
-def normalize(inputs,request,context,config,env,event,api,root,now,*,refresh=p.release_evidence,clock=p.now):
+def validate_inputs(inputs,env,now):
     manifest,_=read(inputs/'release.json');image,_=read(inputs/'release-image.json')
     require(image=={'image':manifest['image'],'image_id':image.get('image_id'),'source_commit':manifest['git_sha'],
         'version':manifest['release_version'],'run_id':int(env['GITHUB_RUN_ID']),'run_attempt':int(env['GITHUB_RUN_ATTEMPT'])}
@@ -53,6 +53,11 @@ def normalize(inputs,request,context,config,env,event,api,root,now,*,refresh=p.r
         r.fresh(row['observed_at'],now,timedelta(hours=24));r.fresh(row['database_updated_at'],now,timedelta(hours=24))
         scans.append({'component':stage,'image':row['image'],'status':'passed','observed_at':row['observed_at'],
             'database_updated_at':row['database_updated_at'],'report_sha256':report_hash,'packages':row['packages'],'findings':counts})
+    return manifest,image,functional,functional_hash,scans
+
+
+def normalize(inputs,request,context,config,env,event,api,root,now,*,refresh=p.release_evidence,clock=p.now):
+    manifest,image,functional,functional_hash,scans=validate_inputs(inputs,env,now)
     fresh=refresh(request,context,manifest,config,env,event,api,root,clock=clock)
     now=clock()
     require(fresh.get('change') in ('patch','minor') and fresh.get('scope')=='dependency_updates','SOURCE_SCOPE_REQUIRED')
