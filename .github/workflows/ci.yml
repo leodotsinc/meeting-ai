@@ -3,6 +3,7 @@ name: CI
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
@@ -11,11 +12,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: meeting-ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: meeting-ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   qualify:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Tests, migrations and build
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -50,6 +52,7 @@ jobs:
       - run: npx tsc --noEmit
 
   image-qualify:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Exact image, authentication and safe migration bootstrap
     runs-on: ubuntu-24.04
     timeout-minutes: 25

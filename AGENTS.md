@@ -1,5 +1,13 @@
 # Meeting AI: agent guidance
 
+## GitHub Actions budget
+
+Iterate and validate locally; do not open a PR or push a commit for each trial.
+A draft PR waits for `ready_for_review`. A push to `main` is a candidate for CI
+and automatic deployment, so publish only the reviewed final batch. Concurrency
+may cancel superseded PR checks, never `main` CI or deployment. Diagnose failed
+runs before retrying; do not skip CI to publish.
+
 - App source and delivery live here. VPS-wide inventory, policies and recovery are maintained in the private `leodots/cloudbox-infra` repository; do not copy host secrets, production data or private evidence here.
 - Production uses Docker Compose, a limited PostgreSQL runtime role and a separate migrator. Never run `prisma db push`, reset/restore a live database, start schema changes with runtime credentials, or use generic `compose down`/global prune in deployment.
 - Preserve authentication/encryption keys and uploads. A new release must retain existing sessions/data; HTTP readiness is distinct from authenticated acceptance, audio-provider processing and disaster recovery.
