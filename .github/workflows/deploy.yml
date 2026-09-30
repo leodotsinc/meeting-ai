@@ -91,7 +91,8 @@ jobs:
         run: |
           set -euo pipefail
           docker pull "$IMAGE"
-          export PULLED_IMAGE_ID=$(docker image inspect "$IMAGE" --format '{{.Id}}')
+          PULLED_IMAGE_ID=$(docker image inspect "$IMAGE" --format '{{.Id}}')
+          export PULLED_IMAGE_ID
           python3 -I -B scripts/reviewed-bootstrap.py image
       - name: Reserve this personal image attempt before host handoff
         if: inputs.reviewed_bootstrap != ''
@@ -202,9 +203,12 @@ jobs:
         id: maintenance_images
         run: |
           set -euo pipefail
-          echo "runtime=$(docker image inspect $(cat image-tag.txt) --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
-          echo "deps=$(docker image inspect meeting-ai-maintenance-deps:local --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
-          echo "builder=$(docker image inspect meeting-ai-maintenance-builder:local --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
+          image=$(cat image-tag.txt)
+          {
+            echo "runtime=$(docker image inspect "$image" --format '{{.Id}}')"
+            echo "deps=$(docker image inspect meeting-ai-maintenance-deps:local --format '{{.Id}}')"
+            echo "builder=$(docker image inspect meeting-ai-maintenance-builder:local --format '{{.Id}}')"
+          } >> "$GITHUB_OUTPUT"
       - name: Scan runtime image with fresh vulnerability database
         id: runtime_security
         uses: leodotsinc/.github/actions/maintenance-scan@902ed57f0e5288e4a0107057cb2e2ca87750a45f
