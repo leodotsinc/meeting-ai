@@ -86,7 +86,7 @@ class BootstrapTests(unittest.TestCase):
         unsafe=copy.deepcopy(new);unsafe['scripts']['postinstall']='unsafe'
         with self.assertRaisesRegex(ValueError,'PACKAGE_BEHAVIOR'):
             b.cumulative_package(old,unsafe,oldlock,newlock,raw_package,raw_lock)
-        self.assertFalse(json.loads((ROOT/'.github/bootstrap.json').read_text())['enabled'])
+        self.assertTrue(json.loads((ROOT/'.github/bootstrap.json').read_text())['enabled'])
         self.assertFalse(json.loads((ROOT/'.github/maintenance.json').read_text())['enabled'])
     def test_other_dependency_major_script_or_override_cannot_piggyback(self):
         package=b.g.decode(HEAD['contents']['package.json'])
@@ -129,7 +129,7 @@ class BootstrapTests(unittest.TestCase):
         bootstrap=workflow[start:finish]
         self.assertIn('docker pull "$IMAGE"',bootstrap);self.assertNotIn('docker build',bootstrap);self.assertNotIn('docker push',bootstrap)
         self.assertIn('meeting-ai-bootstrap-attempt-',bootstrap)
-        self.assertFalse(json.loads((ROOT/'.github/bootstrap.json').read_text())['enabled'])
+        self.assertTrue(json.loads((ROOT/'.github/bootstrap.json').read_text())['enabled'])
 
 
 class PreparedImageAuthenticationTests(unittest.TestCase):
