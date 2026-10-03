@@ -78,7 +78,7 @@ def verify_tag(repository, tag, revision):
     require(tag_commit(repository, tag, reference) == revision, "TAG_COMMIT_MISMATCH")
 
 
-def verify_published_asset(repository, tag, revision, published, *, expected_bytes=None):
+def verify_published_asset(repository, tag, revision, published, *, expected_bytes=None, include_manifest=False):
     """Read-only publication check; this is historical evidence, not live health."""
     verify_tag(repository, tag, revision)
     require(published.get("tag_name") == tag and published.get("draft") is False
@@ -119,8 +119,11 @@ def verify_published_asset(repository, tag, revision, published, *, expected_byt
             and manifest["deployment"]["status"] == "verified"
             and IMAGE.fullmatch(manifest["image"]), "PUBLISHED_MANIFEST_RELEASE_MISMATCH")
     verify_tag(repository, tag, revision)
-    return {"ok": True, "tag": tag, "revision": revision, "status": "published_verified",
-            "manifest_sha256": hashlib.sha256(downloaded.stdout).hexdigest()}
+    result = {"ok": True, "tag": tag, "revision": revision, "status": "published_verified",
+              "manifest_sha256": hashlib.sha256(downloaded.stdout).hexdigest()}
+    if include_manifest:
+        result["manifest"] = manifest
+    return result
 
 
 def verify_published_release(repository, tag, revision):
