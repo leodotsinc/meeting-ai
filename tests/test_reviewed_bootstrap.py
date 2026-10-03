@@ -53,6 +53,41 @@ class BootstrapTests(unittest.TestCase):
         for path in ('src/app/page.tsx','prisma/schema.prisma','scripts/unreviewed.py'):
             candidate=copy.deepcopy(HEAD);candidate['files'][path]={'mode':'100644','oid':'a'*40};candidate['tree']=b.g.tree_oid(candidate['files'])
             with self.subTest(path=path),self.assertRaisesRegex(ValueError,'UNREVIEWED_PATH'):b.delta(BASE,candidate)
+    def test_cumulative_personal_profile_pins_every_package_and_lock_byte(self):
+        raw_package=(ROOT/'package.json').read_text()
+        raw_lock=(ROOT/'package-lock.json').read_text()
+        new=json.loads(raw_package);newlock=json.loads(raw_lock)
+        self.assertEqual(hashlib.sha256(raw_package.encode()).hexdigest(),b.CUMULATIVE_PACKAGE_SHA256)
+        self.assertEqual(hashlib.sha256(raw_lock.encode()).hexdigest(),b.CUMULATIVE_LOCK_SHA256)
+        old=copy.deepcopy(new)
+        previous={'dependencies':{'@hookform/resolvers':'^5.4.0','@radix-ui/react-dialog':'^1.1.20',
+            '@radix-ui/react-select':'^2.3.3','@radix-ui/react-separator':'^1.1.11',
+            'next':'16.3.5','react':'19.2.7','react-dom':'19.2.7','swr':'^2.3.8'},
+            'devDependencies':{'@types/react':'^19','@types/react-dom':'^19'},
+            'overrides':{'fast-uri':'3.1.6'}}
+        for group,entries in previous.items():old[group].update(entries)
+        del old['overrides']['@prisma/config']
+        oldlock={'lockfileVersion':3,'packages':{'node_modules/deepmerge-ts':{'version':'7.1.5'}}}
+        current=b.cumulative_package(old,new,oldlock,newlock,raw_package,raw_lock)
+        self.assertEqual(current['version'],'8.0.0')
+        before=snapshot(old,oldlock,b.BASE)
+        after=snapshot(new,newlock,'d'*40,files=before['files'])
+        after=changed(changed(after,'package.json',raw_package),'package-lock.json',raw_lock)
+        reviewed=b.delta(before,after)
+        self.assertEqual(reviewed['profile'],'exact-cumulative-2026-10-03')
+        self.assertEqual({row['path'] for row in reviewed['files']},{'package.json','package-lock.json'})
+        for value in (raw_package.replace('16.3.6','16.3.7',1),raw_package+' '):
+            with self.assertRaisesRegex(ValueError,'PACKAGE_BEHAVIOR'):
+                b.cumulative_package(old,new,oldlock,newlock,value,raw_lock)
+        with self.assertRaisesRegex(ValueError,'CUMULATIVE_LOCK_BYTES'):
+            b.cumulative_package(old,new,oldlock,newlock,raw_package,raw_lock+' ')
+        with self.assertRaisesRegex(ValueError,'CUMULATIVE_LOCK_BYTES'):
+            b.delta(before,changed(after,'package-lock.json',raw_lock+' '))
+        unsafe=copy.deepcopy(new);unsafe['scripts']['postinstall']='unsafe'
+        with self.assertRaisesRegex(ValueError,'PACKAGE_BEHAVIOR'):
+            b.cumulative_package(old,unsafe,oldlock,newlock,raw_package,raw_lock)
+        self.assertFalse(json.loads((ROOT/'.github/bootstrap.json').read_text())['enabled'])
+        self.assertFalse(json.loads((ROOT/'.github/maintenance.json').read_text())['enabled'])
     def test_other_dependency_major_script_or_override_cannot_piggyback(self):
         package=b.g.decode(HEAD['contents']['package.json'])
         for field,value in [('version','9.0.0'),('scripts',{'postinstall':'arbitrary'}),('overrides',{'deepmerge-ts':'9.0.0'})]:

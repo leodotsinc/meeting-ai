@@ -5,6 +5,7 @@ The operator must install/read back the exact root fence before dispatch. The
 ordinary transport does not prove that an absent fence exists. Disabled in Git.
 """
 from datetime import datetime,timedelta,timezone
+import hashlib
 import importlib.util
 import io
 import json
@@ -21,6 +22,17 @@ n=importlib.util.module_from_spec(spec);spec.loader.exec_module(n)
 r=n.r;g=n.gate;require=g.require
 BASE='99f2069dab3c652620e6ee7a48951c67009aa5e9'
 NODE='node:26-alpine@sha256:dbaa92e5758cbbcf85d65d5403fdb530fe3442cbe8c6dbfb7ef23365450d5070'
+# Personal review of the complete, already tested dependency batch. This is
+# separate from the original one-package bootstrap and monthly classification.
+# Both raw files are pinned: npm graph rearrangements are part of this review.
+CUMULATIVE_PACKAGE_SHA256='5f77f49f8dc2f53c005cfc50944826530ff44cea81ce3613dc8b9b969c02d834'
+CUMULATIVE_LOCK_SHA256='986f10fc1d451aad2127e98f3dc7457fe2e14e9231457eb0fa923d5386e11b88'
+CUMULATIVE_SPECS={
+    'dependencies':{'@hookform/resolvers':'^5.5.7','@radix-ui/react-dialog':'^1.1.23',
+        '@radix-ui/react-select':'^2.3.7','@radix-ui/react-separator':'^1.1.15',
+        'next':'16.3.6','react':'19.3.0','react-dom':'19.3.0','swr':'^2.4.2'},
+    'devDependencies':{'@types/react':'^19.3.0','@types/react-dom':'^19.3.0'},
+    'overrides':{'fast-uri':'3.1.8','@prisma/config':{'deepmerge-ts':'8.0.0'}}}
 KEYS={'schema_version','service','source_sha','source_tree','baseline_receipt_sha256','target_manifest_sha256','prepare_run_id','prepare_run_attempt','cumulative_delta_sha256','issued_at','expires_at'}
 # Exact reviewed adoption paths. Runtime handlers, schema/migrations and content
 # are absent; this list never relaxes monthly dependency classification.
@@ -38,6 +50,33 @@ ALLOWED={'.github/dependabot.yml','.github/maintenance.json','.github/bootstrap.
 
 
 def clock():return datetime.now(timezone.utc)
+
+
+def cumulative_package(old,new,oldlock,newlock,package_raw,lock_raw):
+    """Accept only the exact personally reviewed manifest and npm graph."""
+    require(hashlib.sha256(package_raw.encode()).hexdigest()==CUMULATIVE_PACKAGE_SHA256,
+        'BOOTSTRAP_PACKAGE_BEHAVIOR')
+    require(hashlib.sha256(lock_raw.encode()).hexdigest()==CUMULATIVE_LOCK_SHA256,
+        'BOOTSTRAP_CUMULATIVE_LOCK_BYTES')
+    expected=g.decode(g.canonical(old).decode())
+    for group,updates in CUMULATIVE_SPECS.items():
+        for name,value in updates.items():
+            require(name in expected[group] or (group=='overrides' and name=='@prisma/config'),
+                'BOOTSTRAP_CUMULATIVE_SPEC')
+            expected[group][name]=value
+    require(new==expected,'BOOTSTRAP_PACKAGE_BEHAVIOR')
+    require(oldlock.get('lockfileVersion')==newlock.get('lockfileVersion')==3 and
+        newlock.get('name')==new.get('name') and newlock.get('version')==new.get('version'),
+        'BOOTSTRAP_LOCK_METADATA')
+    require(newlock.get('packages',{}).get('',{}).get('dependencies')==new['dependencies'] and
+        newlock['packages'][''].get('devDependencies')==new['devDependencies'],
+        'BOOTSTRAP_LOCK_ROOT')
+    previous,current=oldlock['packages']['node_modules/deepmerge-ts'],newlock['packages']['node_modules/deepmerge-ts']
+    require(previous['version']=='7.1.5' and current['version']=='8.0.0' and
+        current['resolved']=='https://registry.npmjs.org/deepmerge-ts/-/deepmerge-ts-8.0.0.tgz' and
+        current['integrity']=='sha512-ICNjaP0ML+eSdEpJYQC46XiAn/UjAdwbEl0dE8p85ZTeNDinN4Kd4+9jS4OSAuH7st6eC7rQhsqTF5zIDaUm2g==',
+        'BOOTSTRAP_REVIEWED_OVERRIDE')
+    return current
 
 
 def envelope(request,config,env,event,now):
@@ -67,8 +106,13 @@ def delta(before,after):
     require(rows and {x['path'] for x in rows}<=ALLOWED,'BOOTSTRAP_UNREVIEWED_PATH')
     old,new=(g.decode(s['contents']['package.json']) for s in (before,after))
     expected=g.decode(g.canonical(old).decode());expected['overrides']['@prisma/config']={'deepmerge-ts':'8.0.0'}
-    require(new==expected,'BOOTSTRAP_PACKAGE_BEHAVIOR')
     oldlock,newlock=(g.decode(s['contents']['package-lock.json']) for s in (before,after))
+    if new!=expected:
+        current=cumulative_package(old,new,oldlock,newlock,after['contents']['package.json'],after['contents']['package-lock.json'])
+        return {'baseline_commit':BASE,'source_commit':after['commit'],'source_tree':after['tree'],'files':rows,
+            'profile':'exact-cumulative-2026-10-03',
+            'package_sha256':CUMULATIVE_PACKAGE_SHA256,'lock_sha256':CUMULATIVE_LOCK_SHA256,
+            'dependency':{'name':'deepmerge-ts','before':'7.1.5','version':'8.0.0','integrity':current['integrity']}}
     require(oldlock.get('lockfileVersion')==newlock.get('lockfileVersion')==3,'BOOTSTRAP_LOCK_VERSION')
     require({k:v for k,v in oldlock.items() if k!='packages'}=={k:v for k,v in newlock.items() if k!='packages'},'BOOTSTRAP_LOCK_METADATA')
     a,b=oldlock['packages'],newlock['packages'];path='node_modules/deepmerge-ts'
