@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "repository": "leodotsinc/meeting-ai",
+  "operator": {"login": "leodots", "id": 22529012},
+  "baseline": {
+    "version": "0.1.5",
+    "revision": "99f2069dab3c652620e6ee7a48951c67009aa5e9",
+    "image": "ghcr.io/leodotsinc/meeting-ai@sha256:5167f9ed435825f64770ecf1b33416dbb156843a5aa86f835b15aa9b09da6890",
+    "build_id": "35489726673",
+    "build_attempt": 1
+  },
+  "required_ancestor": "2f018a1270cd1deda360d67ec92e5c924bcae343",
+  "target_version": "0.1.6",
+  "proof_max_age_seconds": 21600,
+  "scan_max_age_seconds": 21600,
+  "database_max_age_seconds": 86400
+}
