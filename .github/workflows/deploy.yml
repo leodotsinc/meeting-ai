@@ -11,6 +11,23 @@ on:
         description: Build and qualify an image without accessing production
         type: boolean
         default: true
+      reviewed_action:
+        description: One reviewed v0.1.5 to v0.1.6 promotion
+        type: choice
+        options: [ordinary, prepare, promote]
+        default: ordinary
+      expected_sha:
+        description: Exact current main SHA reviewed for preparation or promotion
+        type: string
+      prepared_run_id:
+        description: Successful reviewed preparation run (promotion only)
+        type: string
+      prepared_attempt:
+        description: Original preparation attempt (promotion only; reruns refused)
+        type: string
+      expected_proof_sha256:
+        description: Reviewed proof SHA-256 printed by the preparation run
+        type: string
 
 permissions:
   contents: read
@@ -38,6 +55,7 @@ jobs:
       sha: ${{ steps.source.outputs.sha }}
       version: ${{ steps.version.outputs.version }}
       released: ${{ steps.version.outputs.already_released }}
+      reviewed_source: ${{ steps.reviewed.outputs.proof }}
     steps:
       - name: Require current main and exact successful CI
         id: source
@@ -61,10 +79,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Refuse unqualified maintenance before ordinary deployment
+        if: github.event_name != 'workflow_dispatch' || inputs.reviewed_action == 'ordinary'
         env:
           GH_TOKEN: ${{ github.token }}
           PREPARE_ONLY: ${{ inputs.prepare_only }}
         run: python3 scripts/maintenance-guard.py
+      - name: Authenticate the single reviewed promotion source
+        id: reviewed
+        if: github.event_name == 'workflow_dispatch' && inputs.reviewed_action != 'ordinary'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEWED_ACTION: ${{ inputs.reviewed_action }}
+          PREPARE_ONLY: ${{ inputs.prepare_only }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: python3 scripts/reviewed-promotion.py source
       - name: Select SemVer from successful release tags
         id: version
         env:
@@ -74,7 +102,7 @@ jobs:
   build:
     name: Build and qualify exact image
     needs: gate
-    if: needs.gate.outputs.released != 'true'
+    if: needs.gate.outputs.released != 'true' && inputs.reviewed_action != 'promote'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     outputs:
@@ -89,6 +117,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.gate.outputs.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -104,7 +133,18 @@ jobs:
             -t "$image" -f docker/Dockerfile .
           echo "$image" > image-tag.txt
       - name: Verify runtime, authentication boundary and drain
+        if: inputs.reviewed_action != 'prepare'
         run: python3 scripts/qualify-image.py "$(cat image-tag.txt)"
+      - name: Qualify baseline, candidate and rollback on isolated synthetic data
+        if: inputs.reviewed_action == 'prepare'
+        run: |
+          set -euo pipefail
+          baseline=$(python3 -c 'import json; print(json.load(open(".github/reviewed-promotion.json"))["baseline"]["image"])')
+          docker pull --platform linux/amd64 "$baseline"
+          python3 scripts/qualify-image.py "$(cat image-tag.txt)" \
+            --baseline-image "$baseline" \
+            --baseline-revision 99f2069dab3c652620e6ee7a48951c67009aa5e9 \
+            --baseline-build-id 35489726673 --candidate-revision "$RELEASE_SHA" > functional-proof.json
       - name: Materialize builder image for development and build package coverage
         run: docker build --platform linux/amd64 --target builder -t meeting-ai-maintenance-builder:local -f docker/Dockerfile .
       - name: Materialize dependency-stage packages
@@ -113,9 +153,11 @@ jobs:
         id: maintenance_images
         run: |
           set -euo pipefail
-          echo "runtime=$(docker image inspect $(cat image-tag.txt) --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
-          echo "deps=$(docker image inspect meeting-ai-maintenance-deps:local --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
-          echo "builder=$(docker image inspect meeting-ai-maintenance-builder:local --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
+          {
+            echo "runtime=$(docker image inspect "$(cat image-tag.txt)" --format '{{.Id}}')"
+            echo "deps=$(docker image inspect meeting-ai-maintenance-deps:local --format '{{.Id}}')"
+            echo "builder=$(docker image inspect meeting-ai-maintenance-builder:local --format '{{.Id}}')"
+          } >> "$GITHUB_OUTPUT"
       - name: Scan runtime image with fresh vulnerability database
         id: runtime_security
         uses: leodotsinc/.github/actions/maintenance-scan@902ed57f0e5288e4a0107057cb2e2ca87750a45f
@@ -154,6 +196,28 @@ jobs:
             --git-sha "$RELEASE_SHA" --image "$digest" --source-repository "https://github.com/$GITHUB_REPOSITORY" \
             --build-id "$GITHUB_RUN_ID" --build-attempt "$GITHUB_RUN_ATTEMPT" \
             --built-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > release.json
+      - name: Bind all evidence to the prepared image and original build attempt
+        if: inputs.reviewed_action == 'prepare'
+        env:
+          REVIEWED_SOURCE: ${{ needs.gate.outputs.reviewed_source }}
+          REVIEWED_ACTION: ${{ inputs.reviewed_action }}
+          PREPARE_ONLY: ${{ inputs.prepare_only }}
+        run: |
+          set -euo pipefail
+          mkdir reviewed-bundle
+          cp release.json functional-proof.json reviewed-bundle/
+          for stage in runtime builder deps; do
+            cp "maintenance-security/$stage/security.json" "reviewed-bundle/$stage-security.json"
+          done
+          python3 scripts/reviewed-promotion.py prepare
+      - name: Retain the immutable reviewed preparation bundle
+        if: inputs.reviewed_action == 'prepare'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: meeting-reviewed-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reviewed-bundle/*.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Identify this build attempt
         id: artifact
         run: echo "name=meeting-release-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
@@ -164,17 +228,65 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  promote:
+    name: Verify and reuse the reviewed prepared image
+    needs: gate
+    if: github.event_name == 'workflow_dispatch' && inputs.reviewed_action == 'promote' && needs.gate.outputs.released != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    outputs:
+      artifact_name: ${{ steps.artifact.outputs.name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify origin, current main, baseline, artifact digest and all proofs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEWED_ACTION: ${{ inputs.reviewed_action }}
+          PREPARE_ONLY: ${{ inputs.prepare_only }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          PREPARED_RUN_ID: ${{ inputs.prepared_run_id }}
+          PREPARED_ATTEMPT: ${{ inputs.prepared_attempt }}
+          EXPECTED_PROOF_SHA256: ${{ inputs.expected_proof_sha256 }}
+        run: python3 scripts/reviewed-promotion.py promote
+      - name: Identify this transport attempt
+        id: artifact
+        run: echo "name=meeting-release-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - name: Copy the verified original manifest for the existing transport
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: release.json
+          if-no-files-found: error
+          retention-days: 30
+
   rollout:
-    if: github.event_name != 'workflow_dispatch' || inputs.prepare_only == false
+    if: >-
+      always() && !cancelled() && needs.gate.result == 'success' &&
+      ((needs.build.result == 'success' && inputs.reviewed_action != 'promote' &&
+        (github.event_name != 'workflow_dispatch' || inputs.prepare_only == false)) ||
+       (needs.promote.result == 'success' && inputs.reviewed_action == 'promote'))
     name: Backup, preflight and controlled rollout
-    needs: [gate, build]
+    needs: [gate, build, promote]
     permissions:
       contents: read
       packages: read
     uses: leodotsinc/.github/.github/workflows/deploy.yml@247880b24e80ab791b9e2e82dd33ccad7981c053
     with:
       app_id: meeting-ai
-      release_artifact: ${{ needs.build.outputs.artifact_name }}
+      release_artifact: ${{ needs.promote.outputs.artifact_name || needs.build.outputs.artifact_name }}
       release_file: release.json
       release_sha: ${{ needs.gate.outputs.sha }}
       vps_host: ${{ vars.VPS_IP }}
@@ -186,7 +298,8 @@ jobs:
 
   publish:
     name: Publish verified Meeting release
-    needs: [gate, build, rollout]
+    needs: [gate, rollout]
+    if: always() && needs.gate.result == 'success' && needs.rollout.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
