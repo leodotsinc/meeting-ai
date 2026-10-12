@@ -1,0 +1,10 @@
+{
+  "name": "@meeting-ai/eslint-root-glob",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Scoped Next ESLint root-directory glob adapter without the unpatched braces dependency",
+  "main": "index.mjs",
+  "dependencies": {
+    "glob": "13.0.6"
+  }
+}
