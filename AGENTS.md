@@ -43,3 +43,28 @@ runs before retrying; do not skip CI to publish.
 - `scripts/qualify-image.py` uses an internal Docker network with no published ports; HTTP probes run on loopback inside only its random-named containers. It receives no production credentials or provider destinations.
 - The fixture seeds one synthetic project/upload, captures a logical dump and upload bytes, restores into a different database and container, then verifies authenticated project reads, the existing session and exact upload hash. The original database/app stays intact. Hosted CI retains sanitized proof for seven days.
 - This qualifies disposable backup recovery for the tested image. It does not qualify a cross-version upgrade/downgrade, production role/data coverage, real provider processing, a monthly receiver, or an automatic rollout. The Node digest candidate and cumulative unreleased dependency changes retain separate review gates.
+
+## One reviewed v0.1.5 promotion
+
+- `Deploy` retains the ordinary maintenance guard. Its explicit `reviewed_action`
+  dispatches prepare and promote only v0.1.6 from the verified v0.1.5 baseline,
+  using the pinned operator and exact current `main` SHA with the latest successful
+  main-push CI attempt and both required jobs. Reruns are refused for this lane;
+  existing failed publication recovery still reuses its original verified receipt.
+- The source must contain the reviewed `2f018a1` security remediation. Subsequent
+  differences are limited to the named delivery controller, isolated harness,
+  their tests and these instructions. Application, dependency, Docker and migration
+  changes outside that reviewed remediation require another review.
+- Preparation builds once and binds the full baseline-to-candidate commit/tree
+  delta, authenticated baseline release asset, immutable registry/config identities,
+  three fresh sanitized stage scans and isolated baseline → candidate → baseline
+  data/session/upload proof into `meeting-reviewed-RUN-ATTEMPT`. A same-image
+  harness rehearsal never qualifies an upgrade or promotion.
+- Promotion requires the reviewed proof hash and original successful run/attempt.
+  It checks GitHub artifact integrity and every binding again, then copies the
+  original `release.json` into the current run for the pinned shared transport.
+  No image is rebuilt. Proof/scans expire after six hours; the scanner database
+  expires after 24 hours. The existing host control, backup, drain, migration,
+  health, rollback and independently armed promotion fence remain required.
+- Publishing v0.1.6 closes this baseline-specific lane. This is not a recurring
+  receiver, autonomous maintenance authorization or a broader credential grant.
