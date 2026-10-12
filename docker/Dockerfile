@@ -1,6 +1,9 @@
 # Base image
 FROM node:26-alpine AS base
 
+# The current Node base predates Alpine's zlib security update.
+RUN apk add --no-cache 'zlib>=1.3.2-r1'
+
 # Install dependencies only when needed
 FROM base AS deps
 RUN apk add --no-cache libc6-compat
@@ -8,13 +11,19 @@ WORKDIR /app
 
 # Copy package files
 COPY package.json package-lock.json* ./
+COPY vendor ./vendor
 
 # Install dependencies
-RUN npm ci
+RUN npm ci --no-audit \
+    && npm cache clean --force \
+    && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 # Build the application
 FROM base AS builder
 WORKDIR /app
+
+# npm's bundled dependency tree is unnecessary after dependency installation.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 # Set dummy DATABASE_URL for build time (needed for Prisma and Next.js build)
 ENV DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
@@ -22,17 +31,20 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 # Copy node_modules from deps
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/vendor ./vendor
 COPY . .
 
 # Generate Prisma client
-RUN npx prisma generate
+RUN node node_modules/prisma/build/index.js generate
 
 # Build Next.js
-RUN npm run build
+RUN node node_modules/next/dist/bin/next build
 
 # Production image
 FROM base AS runner
 WORKDIR /app
+
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 ARG APP_VERSION
 ARG APP_REVISION
@@ -67,6 +79,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/prisma.config.ts ./prisma.config.ts
 COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
 COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nextjs:nodejs /app/vendor ./vendor
 
 # Migration checks run in a separate one-shot container with the migrator credential.
 COPY --from=builder --chown=nextjs:nodejs /app/scripts ./scripts
