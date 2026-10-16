@@ -416,7 +416,8 @@ class ArtifactTests(unittest.TestCase):
         self.assertIn('path: release.json', promote)
         self.assertIn('needs: [gate, build, promote]', workflow)
         self.assertIn("always() && !cancelled() && needs.gate.result == 'success'", workflow)
-        self.assertIn('result_artifact: ${{ needs.rollout.outputs.result_artifact }}', workflow)
+        publish = workflow.split('\n  publish:', 1)[1]
+        self.assertIn('name: ${{ needs.rollout.outputs.result_artifact }}', publish)
 
 
 if __name__ == '__main__':

@@ -336,20 +336,3 @@ jobs:
           path: deployed-release.json
           if-no-files-found: ignore
           retention-days: 90
-
-  reconcile:
-    name: Reconcile verified deployment record
-    needs: [gate, rollout, publish]
-    if: always() && needs.gate.result == 'success' && needs.rollout.result == 'success' && needs.publish.result == 'success'
-    permissions:
-      actions: read
-      contents: read
-    uses: leodotsinc/.github/.github/workflows/reconcile.yml@5242d92c3bb190f207fd202d21b3df5338ad52e4
-    with:
-      app_id: meeting-ai
-      result_artifact: ${{ needs.rollout.outputs.result_artifact }}
-      result_file: deployment-result.json
-      source_sha: ${{ needs.gate.outputs.sha }}
-      app_client_id: ${{ vars.CLOUDBOX_INFRA_RECONCILE_CLIENT_ID }}
-    secrets:
-      app_private_key: ${{ secrets.CLOUDBOX_INFRA_RECONCILE_PRIVATE_KEY }}
