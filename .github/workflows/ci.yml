@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres@sha256:44c4ee9810eff91f7eab4d822642e01115b1a9eccce4bcbdde7604752d68eac6
+        image: postgres@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
         env:
           POSTGRES_USER: ci_admin
           POSTGRES_PASSWORD: ci_fixture_only
