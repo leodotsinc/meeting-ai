@@ -1,5 +1,5 @@
 # Base image
-FROM node:26-alpine AS base
+FROM node:26-alpine@sha256:6bd9ab43c0ec0190ca7b2d193906cb8b7edf6e7f4afa43ddeccd6452710bffb5 AS base
 
 # The current Node base predates Alpine's zlib security update.
 RUN apk add --no-cache 'zlib>=1.3.2-r1'
